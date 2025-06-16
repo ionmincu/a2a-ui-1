@@ -28,7 +28,11 @@ async function run() {
     const taskId = uuidv4();
     const sendParams: TaskSendParams = {
       id: taskId,
-      message: { role: "user", parts: [{ text: "Hello, agent!" }] },
+      message: { 
+        messageId: uuidv4(),
+        role: "user", 
+        parts: [{ text: "Hello, agent!" }] 
+      },
     };
     // Method now returns Task | null directly
     const taskResult: Task | null = await client.sendTask(sendParams);
@@ -67,7 +71,11 @@ async function streamTask() {
     // Construct just the params
     const streamParams: TaskSendParams = {
       id: streamingTaskId,
-      message: { role: "user", parts: [{ text: "Stream me some updates!" }] },
+      message: { 
+        messageId: uuidv4(),
+        role: "user", 
+        parts: [{ text: "Stream me some updates!" }] 
+      },
     };
     // Pass only params to the client method
     const stream = client.sendTaskSubscribe(streamParams);

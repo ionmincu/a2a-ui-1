@@ -11,19 +11,20 @@ import {Input} from "@/components/ui/input";
 import {A2AClient} from "@/a2a/client";
 import {AgentCard} from "@/a2a/schema";
 import {useHostState} from "@/a2a/state/host/hostStateContext";
+import {HostState} from "@/a2a/state/host/HostState";
 
 type Props = {
     openConversation: (conversation: StateConversation) => void;
 };
 export default function AgentListPage() {
 
-    // Initialize with one default agent (using the sample JSON provided).
-    const [agents, setAgents] = useState<AgentCard[]>([]);
     const [showAgentList, setShowAgentList] = useState(true);
-    const [selectedAgent, setSelectedAgent] = useState<AgentCard | null>(agents[0]);
-
-    const [hostState, setHostState] = useHostState();
+    
+    const { hostState, setHostState, isLoaded } = useHostState();
+    const [selectedAgent, setSelectedAgent] = useState<AgentCard | null>(hostState.agents.first);
     const [showNewAgentModal, setShowNewAgentModal] = useState(false);
+    const [showDeleteModal, setShowDeleteModal] = useState(false);
+    const [agentToDelete, setAgentToDelete] = useState<{url: string, name: string} | null>(null);
 
     // Instead of a form with multiple fields, we now accept only a URL.
     const [newAgentUrl, setNewAgentUrl] = useState<string>("");
@@ -41,26 +42,80 @@ export default function AgentListPage() {
             ).agentCard();
 
             // Update state with the new agent
-            setAgents((prev) => [...prev, newAgent]);
-            hostState.agents = [...hostState.agents, newAgent];
-            setHostState(hostState);
+            const updatedHostState = new HostState({
+                hosts: [...hostState.hosts, newAgent]
+            });
+            setHostState(updatedHostState);
             setSelectedAgent(newAgent);
 
             // Reset new agent URL and close the modal
             setNewAgentUrl("");
             setShowNewAgentModal(false);
+            
+            // Show success message
+            console.log("Agent successfully added and saved to localStorage:", newAgent.name);
         } catch (error) {
             console.error("Error fetching agent data:", error);
             alert(`Failed to fetch agent. Check the URL and try again: ${error}.`);
         }
     };
 
+    // Handler for opening delete confirmation modal
+    const handleDeleteAgent = (agentUrl: string, agentName: string) => {
+        setAgentToDelete({ url: agentUrl, name: agentName });
+        setShowDeleteModal(true);
+    };
+
+    // Handler for confirming deletion
+    const confirmDeleteAgent = () => {
+        if (!agentToDelete) return;
+
+        try {
+            const updatedHostState = new HostState({
+                hosts: hostState.hosts.filter(agent => agent.url !== agentToDelete.url)
+            });
+            setHostState(updatedHostState);
+            
+            // If deleted agent was selected, clear selection
+            if (selectedAgent?.url === agentToDelete.url) {
+                setSelectedAgent(updatedHostState.agents.first || null);
+            }
+            
+            console.log(`Agent "${agentToDelete.name}" successfully deleted and removed from localStorage`);
+            
+            // Show success message
+            alert(`Agent "${agentToDelete.name}" has been successfully deleted.`);
+            
+            // Close modal and reset state
+            setShowDeleteModal(false);
+            setAgentToDelete(null);
+        } catch (error) {
+            console.error("Error deleting agent:", error);
+            alert("Failed to delete agent. Please try again.");
+        }
+    };
+
+    // Handler for canceling deletion
+    const cancelDeleteAgent = () => {
+        setShowDeleteModal(false);
+        setAgentToDelete(null);
+    };
+
+    // Show loading state until data is loaded
+    if (!isLoaded) {
+        return (
+            <div className="flex items-center justify-center h-64">
+                <div className="text-muted-foreground">Loading agents...</div>
+            </div>
+        );
+    }
+
     return (
-        <div className="pb-4">
+        <div>
             <div className="flex items-center justify-between mb-8">
                 {/* Left block: heading + description */}
                 <div>
-                    <h2 className="text-2xl font-semibold">Agents</h2>
+                    <h2 className="text-2xl font-semibold text-foreground">Agents</h2>
                     <p className="text-muted-foreground">
                         This is the page where you can manage agents and their workflows.
                     </p>
@@ -79,12 +134,20 @@ export default function AgentListPage() {
                 </Button>
             </div>
             <div className="space-y-4">
-                {agents.map((agent, index) => (
-                    <Card key={agent.url} className="py-3 px-6">
+                {hostState.agents.length === 0 ? (
+                    <div className="text-center py-12">
+                        <p className="text-muted-foreground text-lg mb-4">No agents configured yet</p>
+                        <p className="text-muted-foreground/60 text-sm">
+                            Click the "Add" button above to add your first agent.
+                        </p>
+                    </div>
+                ) : (
+                    hostState.agents.map((agent, index) => (
+                        <Card key={agent.url} className="py-3 px-6">
 
                         <CardContent className="p-0 flex justify-between items-center text-sm">
                             <div>
-                                <div className="font-medium text-lg">{agent.name}</div>
+                                <div className="font-medium text-lg text-foreground">{agent.name}</div>
                                 <div className="text-md text-muted-foreground">ID: {agent.url}</div>
                             </div>
                             <div className="flex items-center gap-3">
@@ -95,33 +158,35 @@ export default function AgentListPage() {
 
                                 {/* Buttons */}
                                 <Button variant="ghost" size="icon"
-                                        className="bg-white border hover:bg-gray-100 ml-8 cursor-pointer">
-                                    <Trash2 className="w-4 h-4 text-red-600"/>
+                                        className="border ml-8 cursor-pointer"
+                                        onClick={() => handleDeleteAgent(agent.url, agent.name)}>
+                                    <Trash2 className="w-4 h-4 text-destructive"/>
                                 </Button>
                                 <Button variant="ghost" size="icon"
-                                        className="bg-white border hover:bg-gray-100 cursor-pointer">
-                                    <Pencil className="w-4 h-4 text-gray-700"/>
+                                        className="border cursor-pointer">
+                                    <Pencil className="w-4 h-4 text-muted-foreground"/>
                                 </Button>
                                 <Button variant="ghost" size="icon"
-                                        className="bg-white border hover:bg-gray-100 cursor-pointer" onClick={() => {
+                                        className="border cursor-pointer" onClick={() => {
 
                                 }}>
-                                    <ExternalLink className="w-4 h-4 text-gray-700"/>
+                                    <ExternalLink className="w-4 h-4 text-muted-foreground"/>
                                 </Button>
                             </div>
                         </CardContent>
                     </Card>
-                ))}
+                    ))
+                )}
             </div>
 
             {/* New Agent Modal Overlay (Paste URL and fetch JSON to create new agent) */}
             {showNewAgentModal && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-                    <div className="bg-white rounded-lg shadow-lg w-full max-w-md p-6 relative">
-                        <h3 className="text-xl font-semibold mb-4">Create New Agent</h3>
+                    <div className="bg-background border rounded-lg shadow-lg w-full max-w-md p-6 relative">
+                        <h3 className="text-xl font-semibold mb-4 text-foreground">Create New Agent</h3>
                         <div className="space-y-4">
                             <div>
-                                <label className="block text-sm font-medium mb-1">
+                                <label className="block text-sm font-medium mb-1 text-foreground">
                                     Agent URL
                                 </label>
                                 <Input
@@ -136,6 +201,31 @@ export default function AgentListPage() {
                                 Cancel
                             </Button>
                             <Button onClick={handleCreateNewAgent}>Create Agent</Button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Delete Agent Confirmation Modal */}
+            {showDeleteModal && agentToDelete && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+                    <div className="bg-background border rounded-lg shadow-lg w-full max-w-md p-6 relative">
+                        <h3 className="text-xl font-semibold mb-4 text-destructive">Delete Agent</h3>
+                        <div className="mb-6">
+                            <p className="text-foreground">
+                                Are you sure you want to delete agent <strong>"{agentToDelete.name}"</strong>?
+                            </p>
+                            <p className="text-sm text-muted-foreground mt-2">
+                                This action cannot be undone. The agent will be permanently removed from your local storage.
+                            </p>
+                        </div>
+                        <div className="flex justify-end space-x-2">
+                            <Button variant="outline" onClick={cancelDeleteAgent}>
+                                Cancel
+                            </Button>
+                            <Button variant="destructive" onClick={confirmDeleteAgent}>
+                                Delete Agent
+                            </Button>
                         </div>
                     </div>
                 </div>

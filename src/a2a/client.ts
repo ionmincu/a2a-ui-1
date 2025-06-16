@@ -33,6 +33,10 @@ import {
   // Streaming Payload types (used in public method yield signatures)
   TaskStatusUpdateEvent,
   TaskArtifactUpdateEvent,
+  MessageSendParams,
+  SendMessageResponse,
+  Message,
+  AgentCardResponse,
 } from "./schema";
 
 // Simple error class for client-side representation of JSON-RPC errors
@@ -345,73 +349,94 @@ export class A2AClient {
   }
 
   /**
-   * Retrieves the AgentCard.
-   * Note: The standard A2A protocol doesn't define a JSON-RPC method for this.
-   * This implementation fetches it from a hypothetical '/agent-card' endpoint
-   * on the same server, assuming it's provided out-of-band.
-   * Caches the result after the first successful fetch.
+   * Retrieves the Agent Card containing the agent's metadata, capabilities, and available skills.
+   * This method caches the agent card to avoid repeated requests.
+   *
+   * @returns Promise resolving to an AgentCard object or null if not available.
+   * @throws RpcError on JSON-RPC errors or network issues.
    */
-  // @ts-ignore - Protocol defines sync, but client needs async fetch.
   async agentCard(): Promise<AgentCard> {
     if (this.cachedAgentCard) {
       return this.cachedAgentCard;
     }
 
-    // Assumption: Server exposes the card at a simple GET endpoint.
-    // Adjust this URL/method if the server provides the card differently.
-    const cardUrl = `${this.baseUrl}/.well-known/agent.json`; // Or just this.baseUrl if served at root
-
+    // 1) Try well-known endpoint first
     try {
-      const response = await this.fetchImpl(cardUrl, {
+      const wellKnownUrl = `${this.baseUrl}/.well-known/agent.json`;
+      const res = await this.fetchImpl(wellKnownUrl, {
         method: "GET",
-        headers: {
-          Accept: "application/json",
-        },
+        headers: { Accept: "application/json" },
       });
+      if (res.ok) {
+        const json = (await res.json()) as AgentCard;
+        this.cachedAgentCard = json;
+        return json;
+      }
+    } catch (_) {
+      /* ignore and fallback */
+    }
 
-      if (!response.ok) {
-        throw new Error(
-          `HTTP error ${response.status} fetching agent card from ${cardUrl}: ${response.statusText}`
-        );
+    // 2) Fallback to JSON-RPC "agent/card"
+    try {
+      const response = await this._makeHttpRequest("agent/card", null);
+      const agentCard = await this._handleJsonResponse<AgentCardResponse>(
+        response,
+        "agent/card"
+      );
+
+      if (!agentCard) {
+        throw new Error("Agent card not found or invalid response received.");
       }
 
-      const card = await response.json();
-      // TODO: Add validation using a Zod schema or similar if available
-      this.cachedAgentCard = card as AgentCard;
-      return this.cachedAgentCard;
+      this.cachedAgentCard = agentCard;
+      return agentCard;
     } catch (error) {
-      console.error("Failed to fetch or parse agent card:", error);
-      throw new RpcError(
-        -32603, // Use literal value for ErrorCodeInternalError
-        `Could not retrieve agent card: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
-        error
+      console.error("Error fetching agent card:", error);
+      throw error;
+    }
+  }
+
+  /**
+   * Sends a message to the agent and returns the response message (non-streaming).
+   * 
+   * @param params - MessageSendParams containing the message and configuration
+   * @returns Promise resolving to a Message response or null
+   * @throws RpcError on JSON-RPC errors or network issues
+   */
+  async sendMessage(params: MessageSendParams): Promise<Message | null> {
+    try {
+      const response = await this._makeHttpRequest("message/send", params);
+      const result = await this._handleJsonResponse<SendMessageResponse>(
+        response,
+        "message/send"
       );
+      return result || null;
+    } catch (error) {
+      console.error("Error sending message:", error);
+      throw error;
     }
   }
 
   /**
    * Sends a task request to the agent (non-streaming).
-   * @param params The parameters for the tasks/send method.
+   * @param params The parameters for the message/send method.
    * @returns A promise resolving to the Task object or null.
    */
   async sendTask(params: TaskSendParams): Promise<Task | null> {
     const httpResponse = await this._makeHttpRequest<SendTaskRequest>(
-      "tasks/send",
+      "message/stream",
       params
     );
-    // Pass the full Response type to handler, which returns Res['result']
     // @ts-ignore
     return this._handleJsonResponse<SendTaskResponse>(
       httpResponse,
-      "tasks/send"
+      "message/stream"
     );
   }
 
   /**
    * Sends a task request and subscribes to streaming updates.
-   * @param params The parameters for the tasks/sendSubscribe method.
+   * @param params The parameters for the message/stream method.
    * @yields TaskStatusUpdateEvent or TaskArtifactUpdateEvent payloads.
    */
   sendTaskSubscribe(
@@ -422,7 +447,7 @@ export class A2AClient {
     ): AsyncIterable<TaskStatusUpdateEvent | TaskArtifactUpdateEvent> {
       const httpResponse =
         await this._makeHttpRequest<SendTaskStreamingRequest>(
-          "tasks/sendSubscribe",
+          "message/stream",
           params,
           "text/event-stream"
         );
@@ -430,7 +455,7 @@ export class A2AClient {
       // @ts-ignore
       yield* this._handleStreamingResponse<SendTaskStreamingResponse>(
         httpResponse,
-        "tasks/sendSubscribe"
+        "message/stream"
       );
     }.bind(this)();
 
@@ -470,39 +495,39 @@ export class A2AClient {
 
   /**
    * Sets or updates the push notification config for a task.
-   * @param params The parameters for the tasks/pushNotification/set method (which is TaskPushNotificationConfig).
+   * @param params The parameters for the tasks/pushNotificationConfig/set method (which is TaskPushNotificationConfig).
    * @returns A promise resolving to the confirmed TaskPushNotificationConfig or null.
    */
   async setTaskPushNotification(
     params: TaskPushNotificationConfig
   ): Promise<TaskPushNotificationConfig | null> {
     const httpResponse = await this._makeHttpRequest<SetTaskPushNotificationRequest>(
-      "tasks/pushNotification/set",
+      "tasks/pushNotificationConfig/set",
       params
     );
     // @ts-ignore
     return this._handleJsonResponse<SetTaskPushNotificationResponse>(
       httpResponse,
-      "tasks/pushNotification/set"
+      "tasks/pushNotificationConfig/set"
     );
   }
 
   /**
    * Retrieves the currently configured push notification config for a task.
-   * @param params The parameters for the tasks/pushNotification/get method.
+   * @param params The parameters for the tasks/pushNotificationConfig/get method.
    * @returns A promise resolving to the TaskPushNotificationConfig or null.
    */
   async getTaskPushNotification(
     params: TaskIdParams
   ): Promise<TaskPushNotificationConfig | null> {
     const httpResponse = await this._makeHttpRequest<GetTaskPushNotificationRequest>(
-      "tasks/pushNotification/get",
+      "tasks/pushNotificationConfig/get",
       params
     );
     // @ts-ignore
     return this._handleJsonResponse<GetTaskPushNotificationResponse>(
       httpResponse,
-      "tasks/pushNotification/get"
+      "tasks/pushNotificationConfig/get"
     );
   }
 

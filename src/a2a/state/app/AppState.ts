@@ -19,6 +19,10 @@ export class AppState {
     form_responses: { [key: string]: string } = {};
     polling_interval: number = 1;
 
+    // Arize Phoenix settings
+    arize_phoenix_url: string = "";
+    arize_phoenix_enabled: boolean = false;
+
     constructor(init?: Partial<AppState>) {
         if (init) {
             Object.assign(this, init);

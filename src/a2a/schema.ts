@@ -306,61 +306,105 @@ export type FileContentUri = FileContentBase & {
  */
 export type FileContent = FileContentBytes | FileContentUri;
 
+// === Message Parts
+
 /**
- * Represents a part of a message containing text content.
+ * Base interface for all message parts.
  */
-export interface TextPart {
-  type: "text";
+export interface PartBase {
+  /**
+   * Extension metadata.
+   */
+  metadata?: {
+    [key: string]: any;
+  };
+}
+
+/**
+ * File content with bytes.
+ */
+export interface FileWithBytes {
+  /**
+   * Optional name of the file.
+   */
+  name?: string;
+  
+  /**
+   * Optional MIME type of the file content.
+   */
+  mimeType?: string;
+  
+  /**
+   * File content encoded as a Base64 string.
+   */
+  bytes: string;
+}
+
+/**
+ * File content with URI.
+ */
+export interface FileWithUri {
+  /**
+   * Optional name of the file.
+   */
+  name?: string;
+  
+  /**
+   * Optional MIME type of the file content.
+   */
+  mimeType?: string;
+  
+  /**
+   * URI pointing to the file content.
+   */
+  uri: string;
+}
+
+/**
+ * Represents a text segment within parts.
+ */
+export interface TextPart extends PartBase {
+  /**
+   * Part type - text for TextParts.
+   */
+  kind: "text";
 
   /**
-   * The text content.
+   * Text content.
    */
   text: string;
-
-  /**
-   * Optional metadata associated with this text part.
-   */
-  metadata?: Record<string, unknown> | null;
 }
 
 /**
- * Represents a part of a message containing file content.
+ * Represents a File segment within parts.
  */
-export interface FilePart {
+export interface FilePart extends PartBase {
   /**
-   * Type identifier for this part.
+   * Part type - file for FileParts.
    */
-  type: "file";
+  kind: "file";
 
   /**
-   * The file content, provided either inline or via URI.
+   * File content either as url or bytes.
    */
-  file: FileContent;
-
-  /**
-   * Optional metadata associated with this file part.
-   */
-  metadata?: Record<string, unknown> | null;
+  file: FileWithBytes | FileWithUri;
 }
 
 /**
- * Represents a part of a message containing structured data (JSON).
+ * Represents a structured data segment within a message part.
  */
-export interface DataPart {
+export interface DataPart extends PartBase {
   /**
-   * Type identifier for this part.
+   * Part type - data for DataParts.
    */
-  type: "data";
+  kind: "data";
 
   /**
-   * The structured data content as a JSON object.
+   * Structured data content.
    */
-  data: Record<string, unknown>;
-
-  /**
-   * Optional metadata associated with this data part.
-   */
-  metadata?: Record<string, unknown> | null;
+  data: {
+    [key: string]: any;
+  };
 }
 
 /**
@@ -373,66 +417,88 @@ export type Part = TextPart | FilePart | DataPart;
  */
 export interface Artifact {
   /**
+   * Unique identifier for the artifact.
+   */
+  artifactId: string;
+
+  /**
    * Optional name for the artifact.
-   * @default null
    */
-  name?: string | null;
+  name?: string;
 
   /**
-   * Optional description of the artifact.
-   * @default null
+   * Optional description for the artifact.
    */
-  description?: string | null;
+  description?: string;
 
   /**
-   * The constituent parts of the artifact.
+   * Artifact parts.
    */
   parts: Part[];
 
   /**
-   * Optional index for ordering artifacts, especially relevant in streaming or updates.
-   * @default 0
+   * Extension metadata.
    */
-  index?: number;
+  metadata?: {
+    [key: string]: any;
+  };
 
   /**
-   * Optional flag indicating if this artifact content should append to previous content (for streaming).
-   * @default null
+   * The URIs of extensions that are present or contributed to this Artifact.
    */
-  append?: boolean | null;
-
-  /**
-   * Optional metadata associated with the artifact.
-   * @default null
-   */
-  metadata?: Record<string, unknown> | null;
-
-  /**
-   * Optional flag indicating if this is the last chunk of data for this artifact (for streaming).
-   * @default null
-   */
-  lastChunk?: boolean | null;
+  extensions?: string[];
 }
 
 /**
- * Represents a message exchanged between a user and an agent.
+ * Represents a message exchanged between users and agents.
  */
 export interface Message {
   /**
-   * The role of the sender (user or agent).
+   * Message sender's role.
    */
   role: "user" | "agent";
 
   /**
-   * The content of the message, composed of one or more parts.
+   * Message content.
    */
   parts: Part[];
 
   /**
-   * Optional metadata associated with the message.
-   * @default null
+   * Extension metadata.
    */
-  metadata?: Record<string, unknown> | null;
+  metadata?: {
+    [key: string]: any;
+  };
+
+  /**
+   * The URIs of extensions that are present or contributed to this Message.
+   */
+  extensions?: string[];
+
+  /**
+   * List of tasks referenced as context by this message.
+   */
+  referenceTaskIds?: string[];
+
+  /**
+   * Identifier created by the message creator.
+   */
+  messageId: string;
+
+  /**
+   * Identifier of task the message is related to.
+   */
+  taskId?: string;
+
+  /**
+   * The context the message is associated with.
+   */
+  contextId?: string;
+
+  /**
+   * Event type.
+   */
+  kind: "message";
 }
 
 /**
@@ -642,6 +708,53 @@ export interface PushNotificationConfig {
 }
 
 /**
+ * Configuration for the send message request.
+ */
+export interface MessageSendConfiguration {
+  /**
+   * Accepted output modalities by the client.
+   */
+  acceptedOutputModes: string[];
+
+  /**
+   * Number of recent messages to be retrieved.
+   */
+  historyLength?: number;
+
+  /**
+   * Where the server should send notifications when disconnected.
+   */
+  pushNotificationConfig?: PushNotificationConfig;
+
+  /**
+   * If the server should treat the client as a blocking request.
+   */
+  blocking?: boolean;
+}
+
+/**
+ * Sent by the client to the agent as a request. May create, continue or restart a task.
+ */
+export interface MessageSendParams {
+  /**
+   * The message being sent to the server.
+   */
+  message: Message;
+
+  /**
+   * Send message configuration.
+   */
+  configuration?: MessageSendConfiguration;
+
+  /**
+   * Extension metadata.
+   */
+  metadata?: {
+    [key: string]: any;
+  };
+}
+
+/**
  * Represents the push notification information associated with a specific task ID.
  * Used as parameters for `tasks/pushNotification/set` and as a result type.
  */
@@ -660,7 +773,7 @@ export interface TaskPushNotificationConfig {
 // =================================================================
 
 /**
- * Parameters for the `tasks/send` method.
+ * Parameters for the `message/send` method.
  */
 export interface TaskSendParams {
   /**
@@ -729,13 +842,41 @@ export interface TaskQueryParams extends TaskIdParams {
 // === A2A Request Interfaces
 
 /**
+ * Request to get the agent card.
+ */
+export interface AgentCardRequest extends JSONRPCRequest {
+  /**
+   * Method name for getting agent card.
+   */
+  method: "agent/card";
+  /**
+   * Parameters for the agent card method (usually null).
+   */
+  params: null;
+}
+
+/**
+ * Request to send a message to the agent (non-streaming).
+ */
+export interface SendMessageRequest extends JSONRPCRequest {
+  /**
+   * Method name for sending a message.
+   */
+  method: "message/send";
+  /**
+   * Parameters for the send message method.
+   */
+  params: MessageSendParams;
+}
+
+/**
  * Request to send a message/initiate a task.
  */
 export interface SendTaskRequest extends JSONRPCRequest {
   /**
    * Method name for sending a task message.
    */
-  method: "tasks/send";
+  method: "message/stream";
   /**
    * Parameters for the send task method.
    */
@@ -777,7 +918,7 @@ export interface SetTaskPushNotificationRequest extends JSONRPCRequest {
   /**
    * Method name for setting a task notifications.
    */
-  method: "tasks/pushNotification/set";
+  method: "tasks/pushNotificationConfig/set";
   /**
    * Parameters for the set task push notification method.
    */
@@ -791,7 +932,7 @@ export interface GetTaskPushNotificationRequest extends JSONRPCRequest {
   /**
    * Method name for getting task notification configuration.
    */
-  method: "tasks/pushNotification/get";
+  method: "tasks/pushNotificationConfig/get";
   /**
    * Parameters for the get task push notification config method.
    */
@@ -819,7 +960,7 @@ export interface SendTaskStreamingRequest extends JSONRPCRequest {
   /**
    * Method name for sending a task message and subscribing to updates.
    */
-  method: "tasks/sendSubscribe";
+  method: "message/stream";
   /**
    * Parameters for the streaming task send method.
    */
@@ -829,13 +970,25 @@ export interface SendTaskStreamingRequest extends JSONRPCRequest {
 // === A2A Response Interfaces
 
 /**
- * Response to a `tasks/send` request.
+ * Response to an `agent/card` request.
+ * Contains the AgentCard or an error.
+ */
+export type AgentCardResponse = JSONRPCResponse<AgentCard | null, A2AError>;
+
+/**
+ * Response to a `message/send` request.
+ * Contains the Message response or an error.
+ */
+export type SendMessageResponse = JSONRPCResponse<Message | null, A2AError>;
+
+/**
+ * Response to a `message/send` request.
  * Contains the Task object or an error.
  */
 export type SendTaskResponse = JSONRPCResponse<Task | null, A2AError>;
 
 /**
- * Response to a streaming task operation, either through `tasks/sendSubscribe` or a subscription.
+ * Response to a streaming task operation, either through `message/stream` or a subscription.
  * Contains a TaskStatusUpdateEvent, TaskArtifactUpdateEvent, or an error.
  */
 export type SendTaskStreamingResponse = JSONRPCResponse<
@@ -887,6 +1040,8 @@ export type GetTaskPushNotificationResponse = JSONRPCResponse<
  * Represents any valid request defined in the A2A protocol.
  */
 export type A2ARequest =
+  | AgentCardRequest
+  | SendMessageRequest
   | SendTaskRequest
   | GetTaskRequest
   | CancelTaskRequest
@@ -902,6 +1057,8 @@ export type A2ARequest =
  * (This is a helper type, not explicitly defined with `oneOf` in the schema like A2ARequest, but useful).
  */
 export type A2AResponse =
+  | AgentCardResponse
+  | SendMessageResponse
   | SendTaskResponse
   | GetTaskResponse
   | CancelTaskResponse

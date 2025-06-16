@@ -2,9 +2,13 @@
 export class SettingsState {
     output_mime_types: string[] = ["image/*", "text/plain"];
 
-    constructor(output_mime_types?: string[]) {
-        if (output_mime_types) {
-            this.output_mime_types = output_mime_types;
+    // Arize Phoenix settings
+    arize_phoenix_url: string = "";
+    arize_phoenix_enabled: boolean = false;
+
+    constructor(init?: Partial<SettingsState>) {
+        if (init) {
+            Object.assign(this, init);
         }
     }
 }

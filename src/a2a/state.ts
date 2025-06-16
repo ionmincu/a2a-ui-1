@@ -8,17 +8,23 @@ export class StateConversation {
     conversation_name: string;
     is_active: boolean;
     message_ids: string[];
+    agent_url?: string; // URL of the associated agent
+    context_id?: string; // A2A context identifier for conversation continuity
 
     constructor(
         conversation_id: string = "",
         conversation_name: string = "",
         is_active: boolean = true,
-        message_ids: string[] = []
+        message_ids: string[] = [],
+        agent_url?: string,
+        context_id?: string
     ) {
         this.conversation_id = conversation_id;
         this.conversation_name = conversation_name;
         this.is_active = is_active;
         this.message_ids = message_ids;
+        this.agent_url = agent_url;
+        this.context_id = context_id;
     }
 }
 
