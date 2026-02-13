@@ -1,13 +1,19 @@
-import React from "react";
-import { ChatMessage } from "@/types/chat";
-import { ArtifactDisplay } from "./ArtifactDisplay";
-import { PartsDisplay } from "./PartsDisplay";
+import React from 'react';
+
+import { ChatMessage } from '@/types/chat';
+
+import { ArtifactDisplay } from './ArtifactDisplay';
+import { PartsDisplay } from './PartsDisplay';
 
 interface ChatMessageBubbleProps {
     message: ChatMessage;
 }
 
 export const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = ({ message }) => {
+    const displayArtifacts = (message.artifacts || []).filter(
+        artifact => Array.isArray(artifact.parts) && artifact.parts.length > 0
+    );
+
     return (
         <div
             className={`mb-4 ${
@@ -41,9 +47,9 @@ export const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = ({ message })
                 )}
 
                 {/* Artifacts */}
-                {message.artifacts && message.artifacts.length > 0 && (
+                {displayArtifacts.length > 0 && (
                     <div className="space-y-2">
-                        {message.artifacts.map((artifact, index) => (
+                        {displayArtifacts.map((artifact, index) => (
                             <ArtifactDisplay key={artifact.artifactId || index} artifact={artifact} />
                         ))}
                     </div>

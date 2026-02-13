@@ -242,8 +242,29 @@ export const useChat = ({ agentUrl, isStreamingEnabled = false, contextId, autho
 
         // Проверяем, что ответ может быть как Message, так и Task (некоторые серверы возвращают Task)
         if (responseMessage) {
+            // Если это Task с status.message (UiPath format)
+            if ('kind' in responseMessage && (responseMessage as any).kind === 'task' && 'status' in responseMessage) {
+                const task = responseMessage as any;
+                console.log("Received Task response with status:", task.status?.state);
+                
+                // Extract message from task.status.message
+                if (task.status?.message?.parts && Array.isArray(task.status.message.parts)) {
+                    responseParts = task.status.message.parts;
+                    const textParts = task.status.message.parts
+                        .filter((part: any) => part.kind === "text")
+                        .map((part: any) => part.text)
+                        .join("");
+                    agentResponse = textParts || "Empty response";
+                    console.log("Extracted text from Task.status.message:", agentResponse);
+                }
+                
+                // Also check for artifacts in the task
+                if (task.artifacts && Array.isArray(task.artifacts)) {
+                    responseArtifacts = task.artifacts;
+                }
+            }
             // Если это Task (имеет artifacts на верхнем уровне)
-            if ('artifacts' in responseMessage && Array.isArray(responseMessage.artifacts)) {
+            else if ('artifacts' in responseMessage && Array.isArray(responseMessage.artifacts)) {
                 responseArtifacts = responseMessage.artifacts;
                 
                 // Извлекаем текст из всех text parts во всех artifacts
@@ -322,21 +343,6 @@ export const useChat = ({ agentUrl, isStreamingEnabled = false, contextId, autho
         const accumulatedParts: Part[] = [];
 
         try {
-            // Создаем временное сообщение агента для стриминга
-            setMessages(prev => {
-                const agentMessage: ChatMessage = {
-                    id: prev.length + 1,
-                    sender: "agent",
-                    content: "▋", // Начинаем с курсора
-                    senderName: "Assistant",
-                    timestamp: new Date(),
-                    artifacts: [],
-                    parts: []
-                };
-                agentMessageId = agentMessage.id;
-                return [...prev, agentMessage];
-            });
-
             // Обрабатываем стрим
             for await (const event of client.sendTaskSubscribe(sendParams)) {
                 console.log("Streaming event:", event);
@@ -362,6 +368,13 @@ export const useChat = ({ agentUrl, isStreamingEnabled = false, contextId, autho
                     // Обработка TaskArtifactUpdateEvent
                     if ('artifact' in event && event.artifact) {
                         const artifact = event.artifact as any;
+                        const hasArtifactParts = Array.isArray(artifact.parts) && artifact.parts.length > 0;
+                        const hasUsefulArtifactContent = hasArtifactParts || !!artifact.description || !!artifact.metadata;
+                        
+                        // Игнорируем пустые placeholder artifacts (например, "response" с 0 parts)
+                        if (!hasUsefulArtifactContent) {
+                            continue;
+                        }
                         
                         // Добавляем artifact к накопленным
                         const existingIndex = accumulatedArtifacts.findIndex(a => a.artifactId === artifact.artifactId);
@@ -395,42 +408,65 @@ export const useChat = ({ agentUrl, isStreamingEnabled = false, contextId, autho
                         }
                     }
 
-                    // Если получили новый текст, добавляем его к накопленному
+                    // Если получили новый текст, объединяем cumulative/delta чанки
                     if (newTextChunk && newTextChunk !== accumulatedText) {
-                        // Останавливаем предыдущую анимацию
-                        stopTyping();
-                        
-                        // Определяем новую часть текста
-                        let textToAdd = "";
-                        if (newTextChunk.startsWith(accumulatedText)) {
-                            textToAdd = newTextChunk.substring(accumulatedText.length);
-                        } else {
-                            textToAdd = newTextChunk;
-                            accumulatedText = "";
+                        let nextText = accumulatedText;
+
+                        // Сервер присылает полный накопленный снимок
+                        if (!accumulatedText || newTextChunk.startsWith(accumulatedText)) {
+                            nextText = newTextChunk;
                         }
+                        // Сервер присылает только дельту
+                        else if (!accumulatedText.endsWith(newTextChunk)) {
+                            nextText = `${accumulatedText}${newTextChunk}`;
+                        }
+
+                        accumulatedText = nextText;
                         
-                        accumulatedText += textToAdd;
-                        
-                        // Запускаем анимацию печатания для нового текста
-                        if (agentMessageId && textToAdd) {
-                            simulateTyping(agentMessageId, accumulatedText);
+                        // Создаем или обновляем сообщение
+                        if (agentMessageId) {
+                            // Обновляем существующее сообщение
+                            setMessages(prev => 
+                                prev.map(msg => 
+                                    msg.id === agentMessageId 
+                                        ? { ...msg, content: accumulatedText + "▋" } // Показываем курсор
+                                        : msg
+                                )
+                            );
+                        } else {
+                            // Создаем новое сообщение при первом чанке
+                            setMessages(prev => {
+                                const agentMessage: ChatMessage = {
+                                    id: prev.length + 1,
+                                    sender: "agent",
+                                    content: accumulatedText + "▋",
+                                    senderName: "Assistant",
+                                    timestamp: new Date(),
+                                    artifacts: [],
+                                    parts: []
+                                };
+                                agentMessageId = agentMessage.id;
+                                return [...prev, agentMessage];
+                            });
                         }
                     }
                         
                     // Проверяем завершение
                     if ('final' in event && event.final) {
                         console.log("Streaming completed");
-                        // Завершаем анимацию и показываем полный текст с artifacts
+                        // Завершаем и показываем полный текст без курсора с artifacts
                         if (agentMessageId) {
-                            stopTyping();
                             setMessages(prev => 
                                 prev.map(msg => 
                                     msg.id === agentMessageId 
                                         ? { 
                                             ...msg, 
-                                            content: accumulatedText,
+                                            content: accumulatedText, // Убираем курсор
                                             artifacts: accumulatedArtifacts.length > 0 ? accumulatedArtifacts : undefined,
-                                            parts: accumulatedParts.length > 0 ? accumulatedParts : undefined
+                                            // Only include parts if they have non-text content
+                                            parts: accumulatedParts.length > 0 && accumulatedParts.some(p => p.kind !== 'text')
+                                                ? accumulatedParts
+                                                : undefined
                                         }
                                         : msg
                                 )
@@ -442,8 +478,7 @@ export const useChat = ({ agentUrl, isStreamingEnabled = false, contextId, autho
             }
         } catch (error) {
             console.error("Streaming error:", error);
-            // Останавливаем анимацию и показываем ошибку
-            stopTyping();
+            // Показываем ошибку
             if (agentMessageId) {
                 setMessages(prev => 
                     prev.map(msg => 
@@ -491,7 +526,10 @@ export const useChat = ({ agentUrl, isStreamingEnabled = false, contextId, autho
                         senderName: "Assistant",
                         timestamp: new Date(),
                         artifacts: syncResponse.artifacts.length > 0 ? syncResponse.artifacts : undefined,
-                        parts: syncResponse.parts.length > 0 ? syncResponse.parts : undefined
+                        // Only include parts if they have non-text content
+                        parts: syncResponse.parts.length > 0 && syncResponse.parts.some(p => p.kind !== 'text') 
+                            ? syncResponse.parts 
+                            : undefined
                     };
                     return [...prev, agentMessage];
                 });

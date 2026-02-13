@@ -1,17 +1,23 @@
-import {Badge} from "@/components/ui/badge"
-import {Card, CardContent} from "@/components/ui/card"
-import {useAgentState} from "@/a2a/state/agent/agentStateContext";
-import {useAppState} from "@/a2a/state/app/appStateContext";
-import {Button} from "@/components/ui/button";
-import React, {useState} from "react";
-import {v4 as uuidv4} from "uuid";
-import {StateConversation} from "@/a2a/state";
-import {ExternalLink, LucideSidebar, Pencil, Trash2} from "lucide-react";
-import {Input} from "@/components/ui/input";
-import {A2AClient} from "@/a2a/client";
-import {AgentCard} from "@/a2a/schema";
-import {useHostState} from "@/a2a/state/host/hostStateContext";
-import {HostState} from "@/a2a/state/host/HostState";
+import React, { useState } from 'react';
+
+import {
+  ExternalLink,
+  Pencil,
+  Trash2,
+} from 'lucide-react';
+
+import { A2AClient } from '@/a2a/client';
+import { AgentCard } from '@/a2a/schema';
+import { StateConversation } from '@/a2a/state';
+import { HostState } from '@/a2a/state/host/HostState';
+import { useHostState } from '@/a2a/state/host/hostStateContext';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import {
+  Card,
+  CardContent,
+} from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
 
 type Props = {
     openConversation: (conversation: StateConversation) => void;
@@ -23,12 +29,17 @@ export default function AgentListPage() {
     const { hostState, setHostState, isLoaded } = useHostState();
     const [selectedAgent, setSelectedAgent] = useState<AgentCard | null>(hostState.agents.first);
     const [showNewAgentModal, setShowNewAgentModal] = useState(false);
+    const [showEditAgentModal, setShowEditAgentModal] = useState(false);
     const [showDeleteModal, setShowDeleteModal] = useState(false);
     const [agentToDelete, setAgentToDelete] = useState<{url: string, name: string} | null>(null);
+    const [agentToEdit, setAgentToEdit] = useState<AgentCard | null>(null);
 
     // Instead of a form with multiple fields, we now accept only a URL.
     const [newAgentUrl, setNewAgentUrl] = useState<string>("");
     const [newAgentAuthHeader, setNewAgentAuthHeader] = useState<string>("");
+    
+    // Edit agent state
+    const [editAgentAuthHeader, setEditAgentAuthHeader] = useState<string>("");
 
     // Handler for creating a new agent from the modal.
     const handleCreateNewAgent = async () => {
@@ -108,6 +119,54 @@ export default function AgentListPage() {
         setAgentToDelete(null);
     };
 
+    // Handler for opening edit modal
+    const handleEditAgent = (agent: AgentCard) => {
+        setAgentToEdit(agent);
+        setEditAgentAuthHeader(agent.authorizationHeader || "");
+        setShowEditAgentModal(true);
+    };
+
+    // Handler for saving edited agent
+    const handleSaveEditAgent = () => {
+        if (!agentToEdit) return;
+
+        try {
+            const updatedAgent = {
+                ...agentToEdit,
+                authorizationHeader: editAgentAuthHeader.trim() || null
+            };
+
+            const updatedHostState = new HostState({
+                hosts: hostState.hosts.map(agent => 
+                    agent.url === agentToEdit.url ? updatedAgent : agent
+                )
+            });
+            setHostState(updatedHostState);
+
+            // Update selected agent if it was the one being edited
+            if (selectedAgent?.url === agentToEdit.url) {
+                setSelectedAgent(updatedAgent);
+            }
+
+            console.log(`Agent "${agentToEdit.name}" successfully updated`);
+            
+            // Close modal and reset state
+            setShowEditAgentModal(false);
+            setAgentToEdit(null);
+            setEditAgentAuthHeader("");
+        } catch (error) {
+            console.error("Error updating agent:", error);
+            alert("Failed to update agent. Please try again.");
+        }
+    };
+
+    // Handler for canceling edit
+    const cancelEditAgent = () => {
+        setShowEditAgentModal(false);
+        setAgentToEdit(null);
+        setEditAgentAuthHeader("");
+    };
+
     // Show loading state until data is loaded
     if (!isLoaded) {
         return (
@@ -170,7 +229,8 @@ export default function AgentListPage() {
                                     <Trash2 className="w-4 h-4 text-destructive"/>
                                 </Button>
                                 <Button variant="ghost" size="icon"
-                                        className="border cursor-pointer">
+                                        className="border cursor-pointer"
+                                        onClick={() => handleEditAgent(agent)}>
                                     <Pencil className="w-4 h-4 text-muted-foreground"/>
                                 </Button>
                                 <Button variant="ghost" size="icon"
@@ -222,6 +282,57 @@ export default function AgentListPage() {
                                 Cancel
                             </Button>
                             <Button onClick={handleCreateNewAgent}>Create Agent</Button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Edit Agent Modal */}
+            {showEditAgentModal && agentToEdit && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+                    <div className="bg-background border rounded-lg shadow-lg w-full max-w-md p-6 relative">
+                        <h3 className="text-xl font-semibold mb-4 text-foreground">Edit Agent</h3>
+                        <div className="space-y-4">
+                            <div>
+                                <label className="block text-sm font-medium mb-1 text-foreground">
+                                    Agent Name
+                                </label>
+                                <Input
+                                    value={agentToEdit.name}
+                                    disabled
+                                    className="bg-muted"
+                                />
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium mb-1 text-foreground">
+                                    Agent URL
+                                </label>
+                                <Input
+                                    value={agentToEdit.url}
+                                    disabled
+                                    className="bg-muted"
+                                />
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium mb-1 text-foreground">
+                                    Authorization Header
+                                </label>
+                                <Input
+                                    value={editAgentAuthHeader}
+                                    onChange={(e) => setEditAgentAuthHeader(e.target.value)}
+                                    placeholder="Bearer token123 or any authorization value"
+                                    type="password"
+                                />
+                                <p className="text-xs text-muted-foreground mt-1">
+                                    Update the authorization header value (e.g., &quot;Bearer YOUR_NEW_TOKEN&quot;)
+                                </p>
+                            </div>
+                        </div>
+                        <div className="mt-6 flex justify-end space-x-2">
+                            <Button variant="outline" onClick={cancelEditAgent}>
+                                Cancel
+                            </Button>
+                            <Button onClick={handleSaveEditAgent}>Save Changes</Button>
                         </div>
                     </div>
                 </div>
