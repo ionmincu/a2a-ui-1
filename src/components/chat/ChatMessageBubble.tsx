@@ -10,8 +10,15 @@ interface ChatMessageBubbleProps {
 }
 
 export const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = ({ message }) => {
+    // Filter out artifacts that only contain text parts, since text is already shown in the message content
     const displayArtifacts = (message.artifacts || []).filter(
-        artifact => Array.isArray(artifact.parts) && artifact.parts.length > 0
+        artifact => {
+            if (!Array.isArray(artifact.parts) || artifact.parts.length === 0) {
+                return false;
+            }
+            // Only show artifacts that have non-text parts (files, data, etc.)
+            return artifact.parts.some(part => part.kind !== 'text');
+        }
     );
 
     return (

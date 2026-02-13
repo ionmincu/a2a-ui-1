@@ -131,13 +131,21 @@ export async function POST(request: NextRequest): Promise<Response> {
     });
     console.log(`[PROXY ${requestId}] Response Headers:`, responseHeadersObj);
 
+    // Check if the response is a streaming response (SSE) early
+    const contentType = response.headers.get("Content-Type") || "";
+    console.log(`[PROXY ${requestId}] Content-Type: ${contentType}`);
+    const isSSE = contentType.includes("text/event-stream");
+
     // Try to clone response to read body for logging without consuming it
+    // Skip this for SSE streams to avoid interfering with streaming
     let responseBodyForLogging: string | null = null;
-    try {
-      const clonedResponse = response.clone();
-      responseBodyForLogging = await clonedResponse.text();
-    } catch (e) {
-      console.warn(`[PROXY ${requestId}] Could not clone response for logging`);
+    if (!isSSE) {
+      try {
+        const clonedResponse = response.clone();
+        responseBodyForLogging = await clonedResponse.text();
+      } catch (e) {
+        console.warn(`[PROXY ${requestId}] Could not clone response for logging`);
+      }
     }
 
     // Headers that should not be forwarded:
@@ -159,10 +167,7 @@ export async function POST(request: NextRequest): Promise<Response> {
     ]);
 
     // Check if the response is a streaming response (SSE)
-    const contentType = response.headers.get("Content-Type") || "";
-    console.log(`[PROXY ${requestId}] Content-Type: ${contentType}`);
-    
-    if (contentType.includes("text/event-stream")) {
+    if (isSSE) {
       console.log(`[PROXY ${requestId}] Detected streaming response (SSE)`);
       const streamHeaders = new Headers();
 
@@ -172,7 +177,13 @@ export async function POST(request: NextRequest): Promise<Response> {
         }
       });
 
-      console.log(`[PROXY ${requestId}] Returning streaming response`);
+      // Ensure proper SSE headers to prevent buffering
+      streamHeaders.set("Content-Type", "text/event-stream");
+      streamHeaders.set("Cache-Control", "no-cache, no-transform");
+      streamHeaders.set("Connection", "keep-alive");
+      streamHeaders.set("X-Accel-Buffering", "no"); // Disable nginx buffering if behind nginx
+
+      console.log(`[PROXY ${requestId}] Returning streaming response with headers:`, Object.fromEntries(streamHeaders.entries()));
       return new Response(response.body, {
         status: response.status,
         statusText: response.statusText,

@@ -368,6 +368,7 @@ export const useChat = ({ agentUrl, isStreamingEnabled = false, contextId, autho
                     // Обработка TaskArtifactUpdateEvent
                     if ('artifact' in event && event.artifact) {
                         const artifact = event.artifact as any;
+                        const appendMode = 'append' in event ? (event as any).append : false;
                         const hasArtifactParts = Array.isArray(artifact.parts) && artifact.parts.length > 0;
                         const hasUsefulArtifactContent = hasArtifactParts || !!artifact.description || !!artifact.metadata;
                         
@@ -376,23 +377,37 @@ export const useChat = ({ agentUrl, isStreamingEnabled = false, contextId, autho
                             continue;
                         }
                         
-                        // Добавляем artifact к накопленным
-                        const existingIndex = accumulatedArtifacts.findIndex(a => a.artifactId === artifact.artifactId);
-                        if (existingIndex >= 0) {
-                            accumulatedArtifacts[existingIndex] = artifact;
-                        } else {
-                            accumulatedArtifacts.push(artifact);
-                        }
+                        // Добавляем или обновляем artifact к накопленным
+                        // Only store artifacts that have non-text parts (files, data, etc.)
+                        const hasNonTextParts = artifact.parts && artifact.parts.some((p: any) => p.kind !== 'text');
                         
-                        // Обновляем сообщение с новыми artifacts
-                        if (agentMessageId) {
-                            setMessages(prev => 
-                                prev.map(msg => 
-                                    msg.id === agentMessageId 
-                                        ? { ...msg, artifacts: [...accumulatedArtifacts] }
-                                        : msg
-                                )
-                            );
+                        if (hasNonTextParts) {
+                            const existingIndex = accumulatedArtifacts.findIndex(a => a.artifactId === artifact.artifactId);
+                            if (existingIndex >= 0) {
+                                // If append mode, merge the parts
+                                if (appendMode && artifact.parts) {
+                                    const existingArtifact = accumulatedArtifacts[existingIndex];
+                                    accumulatedArtifacts[existingIndex] = {
+                                        ...existingArtifact,
+                                        parts: [...(existingArtifact.parts || []), ...artifact.parts]
+                                    };
+                                } else {
+                                    accumulatedArtifacts[existingIndex] = artifact;
+                                }
+                            } else {
+                                accumulatedArtifacts.push(artifact);
+                            }
+                            
+                            // Обновляем сообщение с новыми artifacts
+                            if (agentMessageId) {
+                                setMessages(prev => 
+                                    prev.map(msg => 
+                                        msg.id === agentMessageId 
+                                            ? { ...msg, artifacts: [...accumulatedArtifacts] }
+                                            : msg
+                                    )
+                                );
+                            }
                         }
                         
                         // Извлекаем текст из artifact для печатания
@@ -403,25 +418,28 @@ export const useChat = ({ agentUrl, isStreamingEnabled = false, contextId, autho
                                 .join("");
                             
                             if (textParts) {
-                                newTextChunk = textParts;
+                                // If append mode, add to existing text, otherwise it's a new chunk
+                                if (appendMode) {
+                                    newTextChunk = textParts; // Will be appended below
+                                } else {
+                                    newTextChunk = textParts;
+                                }
                             }
                         }
                     }
 
                     // Если получили новый текст, объединяем cumulative/delta чанки
-                    if (newTextChunk && newTextChunk !== accumulatedText) {
-                        let nextText = accumulatedText;
-
-                        // Сервер присылает полный накопленный снимок
-                        if (!accumulatedText || newTextChunk.startsWith(accumulatedText)) {
-                            nextText = newTextChunk;
+                    if (newTextChunk) {
+                        // Check if we're in append mode
+                        const isAppendMode = 'append' in event && (event as any).append;
+                        
+                        if (isAppendMode) {
+                            // In append mode, always append the new chunk
+                            accumulatedText = accumulatedText + newTextChunk;
+                        } else {
+                            // In replace mode (append=false), replace accumulated text
+                            accumulatedText = newTextChunk;
                         }
-                        // Сервер присылает только дельту
-                        else if (!accumulatedText.endsWith(newTextChunk)) {
-                            nextText = `${accumulatedText}${newTextChunk}`;
-                        }
-
-                        accumulatedText = nextText;
                         
                         // Создаем или обновляем сообщение
                         if (agentMessageId) {
@@ -448,6 +466,8 @@ export const useChat = ({ agentUrl, isStreamingEnabled = false, contextId, autho
                                 agentMessageId = agentMessage.id;
                                 return [...prev, agentMessage];
                             });
+                            // Hide typing indicator once we receive the first message chunk
+                            setIsLoading(false);
                         }
                     }
                         
