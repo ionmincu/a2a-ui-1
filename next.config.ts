@@ -1,4 +1,4 @@
-import type { NextConfig } from "next";
+import type { NextConfig } from 'next';
 
 const nextConfig: NextConfig = {
   // Enable standalone output for Docker
@@ -11,6 +11,16 @@ const nextConfig: NextConfig = {
       '@vercel/turbopack-next/internal/font/google/font': '',
     },
   },
+  
+  // Configure API route timeouts (for serverless functions)
+  experimental: {
+    serverActions: {
+      bodySizeLimit: '10mb',
+    },
+  },
+  
+  // Note: For local development, the timeout is typically unlimited
+  // For production deployments (Vercel, etc.), you may need to configure separately
 };
 
 export default nextConfig;

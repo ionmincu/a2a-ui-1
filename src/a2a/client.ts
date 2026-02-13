@@ -1,43 +1,35 @@
 // Import necessary types from schema.ts
 import {
-  // Core types
+  A2ARequest,
   AgentCard,
-  AgentCapabilities, // Needed for supports() method check
+  AgentCardResponse,
+  CancelTaskRequest,
+  CancelTaskResponse,
+  GetTaskPushNotificationRequest,
+  GetTaskPushNotificationResponse,
+  GetTaskRequest,
+  GetTaskResponse,
+  JSONRPCError,
   JSONRPCRequest,
   JSONRPCResponse,
-  JSONRPCError,
-  A2ARequest,
-  // Full Request types (needed for internal generics)
-  SendTaskRequest,
-  GetTaskRequest,
-  CancelTaskRequest,
-  SendTaskStreamingRequest,
-  TaskResubscriptionRequest,
-  SetTaskPushNotificationRequest,
-  GetTaskPushNotificationRequest,
-  // Specific Params types (used directly in public method signatures)
-  TaskSendParams,
-  TaskQueryParams, // Used by get, resubscribe
-  TaskIdParams, // Used by cancel, getTaskPushNotificationConfig
-  TaskPushNotificationConfig, // Used by setTaskPushNotificationConfig
-  // Full Response types (needed for internal generics and result extraction)
-  SendTaskResponse,
-  GetTaskResponse,
-  CancelTaskResponse,
-  SendTaskStreamingResponse,
-  SetTaskPushNotificationResponse,
-  GetTaskPushNotificationResponse,
-  // Response Payload types (used in public method return signatures)
-  Task,
-  // TaskHistory, // Not currently implemented
-  // Streaming Payload types (used in public method yield signatures)
-  TaskStatusUpdateEvent,
-  TaskArtifactUpdateEvent,
+  Message,
   MessageSendParams,
   SendMessageResponse,
-  Message,
-  AgentCardResponse,
-} from "./schema";
+  SendTaskRequest,
+  SendTaskResponse,
+  SendTaskStreamingRequest,
+  SendTaskStreamingResponse,
+  SetTaskPushNotificationRequest,
+  SetTaskPushNotificationResponse,
+  Task,
+  TaskArtifactUpdateEvent,
+  TaskIdParams,
+  TaskPushNotificationConfig,
+  TaskQueryParams,
+  TaskResubscriptionRequest,
+  TaskSendParams,
+  TaskStatusUpdateEvent,
+} from './schema';
 
 // Simple error class for client-side representation of JSON-RPC errors
 class RpcError extends Error {
@@ -60,16 +52,27 @@ export class A2AClient {
   private baseUrl: string;
   private fetchImpl: typeof fetch;
   private cachedAgentCard: AgentCard | null = null;
+  private authorizationHeader?: string | null;
+  private useProxy: boolean;
+  private proxyUrl: string;
+  private requestTimeout: number;
 
   /**
    * Creates an instance of A2AClient.
    * @param baseUrl The base URL of the A2A server endpoint.
    * @param fetchImpl Optional custom fetch implementation (e.g., for Node.js environments without global fetch). Defaults to global fetch.
+   * @param authorizationHeader Optional authorization header value for authenticated requests.
+   * @param useProxy Whether to use the proxy endpoint to avoid CORS issues. Defaults to true in browser environments.
+   * @param requestTimeout Timeout for requests in milliseconds. Defaults to 300000 (5 minutes).
    */
-  constructor(baseUrl: string, fetchImpl: typeof fetch = fetch) {
+  constructor(baseUrl: string, fetchImpl: typeof fetch = fetch, authorizationHeader?: string | null, useProxy: boolean = true, requestTimeout: number = 300000) {
     // Ensure baseUrl doesn't end with a slash for consistency
     this.baseUrl = baseUrl.endsWith("/") ? baseUrl.slice(0, -1) : baseUrl;
     this.fetchImpl = fetchImpl;
+    this.authorizationHeader = authorizationHeader;
+    this.useProxy = useProxy;
+    this.proxyUrl = "/api/proxy";
+    this.requestTimeout = requestTimeout;
   }
 
   /**
@@ -85,6 +88,29 @@ export class A2AClient {
     } else {
       // Fallback for environments without crypto.randomUUID
       return Date.now();
+    }
+  }
+
+  /**
+   * Wrapper for fetch with timeout support
+   */
+  private async _fetchWithTimeout(url: string, options: RequestInit): Promise<Response> {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), this.requestTimeout);
+    
+    try {
+      const response = await this.fetchImpl(url, {
+        ...options,
+        signal: controller.signal,
+      });
+      clearTimeout(timeoutId);
+      return response;
+    } catch (error) {
+      clearTimeout(timeoutId);
+      if (error instanceof Error && error.name === 'AbortError') {
+        throw new Error(`Request timeout after ${this.requestTimeout}ms`);
+      }
+      throw error;
     }
   }
 
@@ -110,16 +136,53 @@ export class A2AClient {
     };
 
     try {
-      const response = await this.fetchImpl(this.baseUrl, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Accept: acceptHeader,
-        },
-        body: JSON.stringify(requestBody),
-        // Consider adding keepalive: true if making many rapid requests
-      });
-      return response;
+      const headers: HeadersInit = {
+        "Content-Type": "application/json",
+        Accept: acceptHeader,
+      };
+      
+      const customHeaders: Record<string, string> = {};
+      
+      // Add authorization header if provided
+      if (this.authorizationHeader) {
+        customHeaders["Authorization"] = this.authorizationHeader;
+      }
+      
+      if (this.useProxy) {
+        // Use proxy endpoint
+        const proxyRequestBody = {
+          url: this.baseUrl,
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Accept: acceptHeader,
+          },
+          body: JSON.stringify(requestBody),
+          customHeaders,
+        };
+        
+        const response = await this._fetchWithTimeout(this.proxyUrl, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(proxyRequestBody),
+        });
+        return response;
+      } else {
+        // Direct request without proxy
+        if (this.authorizationHeader) {
+          headers["Authorization"] = this.authorizationHeader;
+        }
+        
+        const response = await this._fetchWithTimeout(this.baseUrl, {
+          method: "POST",
+          headers,
+          body: JSON.stringify(requestBody),
+          // Consider adding keepalive: true if making many rapid requests
+        });
+        return response;
+      }
     } catch (networkError) {
       console.error("Network error during RPC call:", networkError);
       // Wrap network errors into a standard error format if possible
@@ -360,24 +423,85 @@ export class A2AClient {
       return this.cachedAgentCard;
     }
 
-    // 1) Try well-known endpoint first
-    try {
-      const wellKnownUrl = `${this.baseUrl}/.well-known/agent.json`;
-      const res = await this.fetchImpl(wellKnownUrl, {
-        method: "GET",
-        headers: { Accept: "application/json" },
-      });
-      if (res.ok) {
-        const json = (await res.json()) as AgentCard;
-        this.cachedAgentCard = json;
-        return json;
+    // 1) Try well-known endpoint first - try both common paths
+    const wellKnownPaths = [
+      '/.well-known/agent-card.json',  // Try this first (shown in Postman)
+      '/.well-known/agent.json',        // Standard A2A path
+    ];
+    
+    for (const wellKnownPath of wellKnownPaths) {
+      try {
+        const wellKnownUrl = `${this.baseUrl}${wellKnownPath}`;
+        
+        console.log(`[A2AClient] Attempting to fetch agent card from well-known URL: ${wellKnownUrl}`);
+        
+        let res: Response;
+        
+        if (this.useProxy) {
+          // Use proxy endpoint for well-known URL
+          const customHeaders: Record<string, string> = {};
+          if (this.authorizationHeader) {
+            customHeaders["Authorization"] = this.authorizationHeader;
+          }
+          
+          const proxyRequestBody = {
+            url: wellKnownUrl,
+            method: "GET",
+            headers: {
+              Accept: "application/json",
+            },
+            customHeaders,
+          };
+          
+          res = await this._fetchWithTimeout(this.proxyUrl, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify(proxyRequestBody),
+          });
+        } else {
+          // Direct request without proxy
+          const headers: HeadersInit = { Accept: "application/json" };
+          
+          if (this.authorizationHeader) {
+            headers["Authorization"] = this.authorizationHeader;
+          }
+          
+          res = await this._fetchWithTimeout(wellKnownUrl, {
+            method: "GET",
+            headers,
+          });
+        }
+        
+        console.log(`[A2AClient] Well-known endpoint (${wellKnownPath}) response: ${res.status} ${res.statusText}`);
+        
+        if (res.ok) {
+          const json = (await res.json()) as AgentCard;
+          console.log(`[A2AClient] Successfully fetched agent card from well-known endpoint:`, json.name);
+          this.cachedAgentCard = json;
+          return json;
+        } else if (res.status !== 404) {
+          const errorText = await res.text();
+          console.warn(`[A2AClient] Well-known endpoint (${wellKnownPath}) returned ${res.status}: ${errorText}`);
+          // If well-known endpoint exists but returns an error, don't fallback to JSON-RPC
+          throw new Error(`Agent card endpoint returned ${res.status}: ${errorText || res.statusText}`);
+        } else {
+          console.log(`[A2AClient] Well-known endpoint (${wellKnownPath}) not found (404), trying next path...`);
+        }
+      } catch (error) {
+        console.warn(`[A2AClient] Failed to fetch from well-known endpoint (${wellKnownPath}):`, error instanceof Error ? error.message : error);
+        // If it's not a 404, re-throw the error instead of falling back
+        if (error instanceof Error && !error.message.includes('404')) {
+          throw new Error(`Failed to fetch agent card from well-known endpoint: ${error.message}`);
+        }
+        /* otherwise continue to next path */
       }
-    } catch (_) {
-      /* ignore and fallback */
     }
 
     // 2) Fallback to JSON-RPC "agent/card"
     try {
+      console.log(`[A2AClient] Attempting JSON-RPC fallback with method "agent/card"`);
       const response = await this._makeHttpRequest("agent/card", null);
       const agentCard = await this._handleJsonResponse<AgentCardResponse>(
         response,
@@ -388,10 +512,11 @@ export class A2AClient {
         throw new Error("Agent card not found or invalid response received.");
       }
 
+      console.log(`[A2AClient] Successfully fetched agent card via JSON-RPC:`, agentCard.name);
       this.cachedAgentCard = agentCard;
       return agentCard;
     } catch (error) {
-      console.error("Error fetching agent card:", error);
+      console.error("[A2AClient] Error fetching agent card (both well-known and JSON-RPC failed):", error);
       throw error;
     }
   }

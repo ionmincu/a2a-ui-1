@@ -262,6 +262,13 @@ export interface AgentCard {
    * List of specific skills offered by the agent.
    */
   skills: AgentSkill[];
+
+  /**
+   * Optional authorization header value for authenticated requests.
+   * This can be a Bearer token or any other authorization header value.
+   * @default null
+   */
+  authorizationHeader?: string | null;
 }
 
 export interface FileContentBase {

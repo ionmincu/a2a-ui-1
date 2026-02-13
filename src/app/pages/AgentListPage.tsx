@@ -28,6 +28,7 @@ export default function AgentListPage() {
 
     // Instead of a form with multiple fields, we now accept only a URL.
     const [newAgentUrl, setNewAgentUrl] = useState<string>("");
+    const [newAgentAuthHeader, setNewAgentAuthHeader] = useState<string>("");
 
     // Handler for creating a new agent from the modal.
     const handleCreateNewAgent = async () => {
@@ -36,10 +37,15 @@ export default function AgentListPage() {
 
         try {
             // Assuming AgentCard is a TypeScript type for your agent data
+            const authHeader = newAgentAuthHeader.trim() || null;
             const newAgent: AgentCard = await new A2AClient(
                 newAgentUrl,
-                window.fetch.bind(window)
+                window.fetch.bind(window),
+                authHeader
             ).agentCard();
+
+            // Store the authorization header with the agent
+            newAgent.authorizationHeader = authHeader;
 
             // Update state with the new agent
             const updatedHostState = new HostState({
@@ -48,8 +54,9 @@ export default function AgentListPage() {
             setHostState(updatedHostState);
             setSelectedAgent(newAgent);
 
-            // Reset new agent URL and close the modal
+            // Reset new agent URL and authorization header, then close the modal
             setNewAgentUrl("");
+            setNewAgentAuthHeader("");
             setShowNewAgentModal(false);
             
             // Show success message
@@ -194,6 +201,20 @@ export default function AgentListPage() {
                                     onChange={(e) => setNewAgentUrl(e.target.value)}
                                     placeholder="http://localhost:10004"
                                 />
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium mb-1 text-foreground">
+                                    Authorization Header (Optional)
+                                </label>
+                                <Input
+                                    value={newAgentAuthHeader}
+                                    onChange={(e) => setNewAgentAuthHeader(e.target.value)}
+                                    placeholder="Bearer token123 or any authorization value"
+                                    type="password"
+                                />
+                                <p className="text-xs text-muted-foreground mt-1">
+                                    Enter the full authorization header value (e.g., &quot;Bearer YOUR_TOKEN&quot;)
+                                </p>
                             </div>
                         </div>
                         <div className="mt-6 flex justify-end space-x-2">

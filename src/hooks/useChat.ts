@@ -1,17 +1,31 @@
-import { useState, useRef, useCallback, useEffect } from "react";
-import { ChatMessage } from "@/types/chat";
-import { A2AClient } from "@/a2a/client";
-import { TaskSendParams, Message, Part, Artifact, MessageSendParams, MessageSendConfiguration } from "@/a2a/schema";
-import { v4 as uuidv4 } from "uuid";
-import {AgentCard, Task, TaskQueryParams, TextPart} from "@/a2a/schema";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from 'react';
+
+import { v4 as uuidv4 } from 'uuid';
+
+import { A2AClient } from '@/a2a/client';
+import {
+  Artifact,
+  Message,
+  MessageSendConfiguration,
+  MessageSendParams,
+  Part,
+  TaskSendParams,
+} from '@/a2a/schema';
+import { ChatMessage } from '@/types/chat';
 
 interface UseChatProps {
     agentUrl?: string;
     isStreamingEnabled?: boolean;
     contextId?: string;
+    authorizationHeader?: string | null;
 }
 
-export const useChat = ({ agentUrl, isStreamingEnabled = false, contextId }: UseChatProps = {}) => {
+export const useChat = ({ agentUrl, isStreamingEnabled = false, contextId, authorizationHeader }: UseChatProps = {}) => {
     const [messages, setMessages] = useState<ChatMessage[]>([
         {
             id: 1,
@@ -174,7 +188,7 @@ export const useChat = ({ agentUrl, isStreamingEnabled = false, contextId }: Use
 
     // Обычная отправка сообщения (новая схема)
     const sendMessageSync = useCallback(async (content: string) => {
-        const client = new A2AClient(agentUrl!, window.fetch.bind(window));
+        const client = new A2AClient(agentUrl!, window.fetch.bind(window), authorizationHeader);
         const messageId = uuidv4();
         
         // Получаем историю сообщений
@@ -257,11 +271,11 @@ export const useChat = ({ agentUrl, isStreamingEnabled = false, contextId }: Use
         }
 
         return { text: agentResponse, parts: responseParts, artifacts: responseArtifacts };
-    }, [agentUrl, messages, getMessageHistory]);
+    }, [agentUrl, authorizationHeader, messages, getMessageHistory]);
 
     // Стриминговая отправка сообщения (старая схема с TaskSendParams)
     const sendMessageStream = useCallback(async (content: string) => {
-        const client = new A2AClient(agentUrl!, window.fetch.bind(window));
+        const client = new A2AClient(agentUrl!, window.fetch.bind(window), authorizationHeader);
         const taskId = uuidv4();
         const messageId = uuidv4();
         
@@ -442,7 +456,7 @@ export const useChat = ({ agentUrl, isStreamingEnabled = false, contextId }: Use
         }
 
         return accumulatedText;
-    }, [agentUrl, messages, getMessageHistory, simulateTyping, stopTyping]);
+    }, [agentUrl, authorizationHeader, messages, getMessageHistory, simulateTyping, stopTyping]);
 
     const sendMessage = useCallback(async (content: string) => {
         if (!content.trim() || isLoading || !agentUrl) return;

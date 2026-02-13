@@ -46,7 +46,8 @@ export const ChatContainer: React.FC<ChatContainerProps> = ({
     const { messages, isLoading, messagesEndRef, scrollToBottom, sendMessage } = useChat({
         agentUrl: selectedAgent?.url,
         isStreamingEnabled,
-        contextId: currentConversation?.context_id
+        contextId: currentConversation?.context_id,
+        authorizationHeader: selectedAgent?.authorizationHeader
     });
 
     const { trace, loading: traceLoading, error: traceError, projectId, availableProjects, refreshTrace } = useTrace({
