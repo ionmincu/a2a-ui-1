@@ -38,11 +38,15 @@ export const useChat = ({ agentUrl, isStreamingEnabled = false, contextId, autho
             timestamp: new Date(),
         }
     ]);
-    
+
     const [isLoading, setIsLoading] = useState<boolean>(false);
     const messagesEndRef = useRef<HTMLDivElement>(null);
+
+    // A2A multi-turn conversation state
+    const [currentTaskId, setCurrentTaskId] = useState<string | null>(null);
+    const [currentContextId, setCurrentContextId] = useState<string | null>(contextId || null);
     
-    // Refs для управления анимацией печатания
+    // Refs for managing typing animation
     const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
     const typingStateRef = useRef<{
         messageId: number | null;
@@ -60,9 +64,9 @@ export const useChat = ({ agentUrl, isStreamingEnabled = false, contextId, autho
         messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
     }, []);
 
-    // Функция для симуляции печатания токенов
+    // Function to simulate token-by-token typing
     const simulateTyping = useCallback((messageId: number, fullText: string, speed: number = 30) => {
-        // Очищаем предыдущую анимацию
+        // Clear previous animation
         if (typingTimeoutRef.current) {
             clearTimeout(typingTimeoutRef.current);
         }
@@ -78,43 +82,43 @@ export const useChat = ({ agentUrl, isStreamingEnabled = false, contextId, autho
             const state = typingStateRef.current;
             
             if (state.currentIndex < state.fullText.length && state.isTyping) {
-                // Определяем следующий токен (слово или символ)
+                // Determine next token (word or character)
                 let nextIndex = state.currentIndex + 1;
-                
-                // Ускоряем печатание для пробелов и знаков препинания
+
+                // Speed up typing for spaces and punctuation
                 const currentChar = state.fullText[state.currentIndex];
                 if (currentChar === ' ' || /[.,!?;:]/.test(currentChar)) {
                     speed = 10;
                 } else if (/[a-zA-Zа-яА-ЯёЁ0-9]/.test(currentChar)) {
-                    // Для обычных символов пытаемся найти конец слова
-                    while (nextIndex < state.fullText.length && 
+                    // For regular characters, try to find end of word
+                    while (nextIndex < state.fullText.length &&
                            /[a-zA-Zа-яА-ЯёЁ0-9]/.test(state.fullText[nextIndex])) {
                         nextIndex++;
                     }
-                    speed = Math.random() * 40 + 20; // 20-60ms для слов
+                    speed = Math.random() * 40 + 20; // 20-60ms for words
                 } else {
-                    speed = 50; // Медленнее для специальных символов
+                    speed = 50; // Slower for special characters
                 }
 
                 const displayText = state.fullText.substring(0, nextIndex);
                 
-                setMessages(prev => 
-                    prev.map(msg => 
-                        msg.id === messageId 
-                            ? { ...msg, content: displayText + "▋" } // Добавляем курсор
+                setMessages(prev =>
+                    prev.map(msg =>
+                        msg.id === messageId
+                            ? { ...msg, content: displayText + "▋" } // Add cursor
                             : msg
                     )
                 );
 
                 typingStateRef.current.currentIndex = nextIndex;
-                
+
                 typingTimeoutRef.current = setTimeout(typeNextChar, speed);
             } else {
-                // Завершаем печатание
-                setMessages(prev => 
-                    prev.map(msg => 
-                        msg.id === messageId 
-                            ? { ...msg, content: state.fullText } // Убираем курсор
+                // Finish typing
+                setMessages(prev =>
+                    prev.map(msg =>
+                        msg.id === messageId
+                            ? { ...msg, content: state.fullText } // Remove cursor
                             : msg
                     )
                 );
@@ -126,7 +130,7 @@ export const useChat = ({ agentUrl, isStreamingEnabled = false, contextId, autho
         typeNextChar();
     }, []);
 
-    // Функция для остановки анимации печатания
+    // Function to stop typing animation
     const stopTyping = useCallback(() => {
         if (typingTimeoutRef.current) {
             clearTimeout(typingTimeoutRef.current);
@@ -146,7 +150,7 @@ export const useChat = ({ agentUrl, isStreamingEnabled = false, contextId, autho
         }
     }, []);
 
-    // Очистка таймеров при размонтировании
+    // Cleanup timers on unmount
     useEffect(() => {
         return () => {
             if (typingTimeoutRef.current) {
@@ -155,7 +159,7 @@ export const useChat = ({ agentUrl, isStreamingEnabled = false, contextId, autho
         };
     }, []);
 
-    // Функция для преобразования ChatMessage в A2A Message формат
+    // Function to convert ChatMessage to A2A Message format
     const convertChatMessageToA2AMessage = useCallback((chatMessage: ChatMessage): Message => {
         const parts: Part[] = [
             {
@@ -170,7 +174,7 @@ export const useChat = ({ agentUrl, isStreamingEnabled = false, contextId, autho
             role: chatMessage.sender === "user" ? "user" : "agent",
             parts: parts,
             kind: "message",
-            ...(contextId && { contextId: contextId }), // Условно добавляем contextId
+            ...(contextId && { contextId: contextId }), // Conditionally add contextId
             metadata: {
                 timestamp: chatMessage.timestamp.toISOString(),
                 senderName: chatMessage.senderName,
@@ -179,12 +183,12 @@ export const useChat = ({ agentUrl, isStreamingEnabled = false, contextId, autho
         };
     }, [contextId]);
 
-    // Функция для получения истории последних 10 сообщений в формате A2A
+    // Function to get the last 10 messages in A2A format
     const getMessageHistory = useCallback((currentMessages: ChatMessage[]): Message[] => {
-        // Берем последние 10 сообщений (исключая приветственное сообщение если это единственное)
-        const messagesToInclude = currentMessages.length === 1 && currentMessages[0].id === 1 
-            ? [] // Не включаем начальное приветственное сообщение
-            : currentMessages.slice(-10); // Берем последние 10 сообщений
+        // Take last 10 messages (excluding welcome message if it's the only one)
+        const messagesToInclude = currentMessages.length === 1 && currentMessages[0].id === 1
+            ? [] // Don't include initial welcome message
+            : currentMessages.slice(-10); // Take last 10 messages
         
         return messagesToInclude.map(convertChatMessageToA2AMessage);
     }, [convertChatMessageToA2AMessage]);
@@ -208,34 +212,37 @@ export const useChat = ({ agentUrl, isStreamingEnabled = false, contextId, autho
             });
     }, []);
 
-    // Обычная отправка сообщения (новая схема)
+    // Regular message sending (new schema)
     const sendMessageSync = useCallback(async (content: string, fileAttachments?: FileAttachment[]) => {
         const client = new A2AClient(agentUrl!, window.fetch.bind(window), authorizationHeader);
         const messageId = uuidv4();
-        
-        // Получаем историю сообщений
+
+        // Get message history
         const messageHistory = getMessageHistory(messages);
-        
+
         // Build parts: text + files
         const parts: Part[] = [{ text: content, kind: "text" }];
         if (fileAttachments && fileAttachments.length > 0) {
             parts.push(...buildFileParts(fileAttachments));
         }
-        
-        // Создаем конфигурацию
+
+        // Create configuration
         const configuration: MessageSendConfiguration = {
             acceptedOutputModes: ["text"],
             historyLength: messageHistory.length,
             blocking: true
         };
 
-        // Создаем message объект с условным включением contextId
+        // Create message object:
+        // - Use taskId to continue conversation (follow-up messages)
+        // - Use contextId only for first message
         const message: Message = {
             messageId: messageId,
             role: "user",
             parts: parts,
             kind: "message",
-            ...(contextId && { contextId: contextId })
+            ...(currentTaskId && { taskId: currentTaskId }), // Follow-up: use saved taskId
+            ...(currentContextId && !currentTaskId && { contextId: currentContextId }) // First message: use contextId
         };
 
         const sendParams: MessageSendParams = {
@@ -251,7 +258,7 @@ export const useChat = ({ agentUrl, isStreamingEnabled = false, contextId, autho
             }
         };
 
-        console.log("Отправляем сообщение (обычный режим) с историей:", {
+        console.log("Sending message (regular mode) with history:", {
             messageId,
             historyLength: messageHistory.length,
             isStreaming: false,
@@ -263,14 +270,33 @@ export const useChat = ({ agentUrl, isStreamingEnabled = false, contextId, autho
         const responseMessage = await client.sendMessage(sendParams);
         console.log("Message Result:", responseMessage);
 
+        // Save taskId and contextId from response for multi-turn conversations
+        if (responseMessage) {
+            // Extract taskId from Task response
+            if ('id' in responseMessage && typeof responseMessage.id === 'string') {
+                console.log("Saving taskId for multi-turn conversation:", responseMessage.id);
+                setCurrentTaskId(responseMessage.id);
+            }
+
+            // Extract contextId if available in the response
+            if ('contextId' in responseMessage && typeof (responseMessage as any).contextId === 'string') {
+                console.log("Saving contextId:", (responseMessage as any).contextId);
+                setCurrentContextId((responseMessage as any).contextId);
+            } else if ('status' in responseMessage && (responseMessage as any).status?.message?.contextId) {
+                // Some servers might put contextId inside status.message
+                console.log("Saving contextId from status.message:", (responseMessage as any).status.message.contextId);
+                setCurrentContextId((responseMessage as any).status.message.contextId);
+            }
+        }
+
         // Extract text from response message and collect parts/artifacts
         let agentResponse = "No response";
         let responseParts: Part[] = [];
         let responseArtifacts: Artifact[] = [];
 
-        // Проверяем, что ответ может быть как Message, так и Task (некоторые серверы возвращают Task)
+        // Check that response can be either Message or Task (some servers return Task)
         if (responseMessage) {
-            // Если это Task с status.message (UiPath format)
+            // If this is Task with status.message (UiPath format)
             if ('kind' in responseMessage && (responseMessage as any).kind === 'task' && 'status' in responseMessage) {
                 const task = responseMessage as any;
                 console.log("Received Task response with status:", task.status?.state);
@@ -291,11 +317,11 @@ export const useChat = ({ agentUrl, isStreamingEnabled = false, contextId, autho
                     responseArtifacts = task.artifacts;
                 }
             }
-            // Если это Task (имеет artifacts на верхнем уровне)
+            // If this is Task (has artifacts at top level)
             else if ('artifacts' in responseMessage && Array.isArray(responseMessage.artifacts)) {
                 responseArtifacts = responseMessage.artifacts;
-                
-                // Извлекаем текст из всех text parts во всех artifacts
+
+                // Extract text from all text parts in all artifacts
                 for (const artifact of responseMessage.artifacts) {
                     if (artifact.parts) {
                         const textParts = artifact.parts
@@ -308,7 +334,7 @@ export const useChat = ({ agentUrl, isStreamingEnabled = false, contextId, autho
                     }
                 }
             }
-            // Если это Message (имеет parts на верхнем уровне)
+            // If this is Message (has parts at top level)
             else if ('parts' in responseMessage && Array.isArray(responseMessage.parts)) {
                 responseParts = responseMessage.parts;
                 const textParts = responseMessage.parts
@@ -322,13 +348,13 @@ export const useChat = ({ agentUrl, isStreamingEnabled = false, contextId, autho
         return { text: agentResponse, parts: responseParts, artifacts: responseArtifacts };
     }, [agentUrl, authorizationHeader, messages, getMessageHistory, buildFileParts]);
 
-    // Стриминговая отправка сообщения (старая схема с TaskSendParams)
+    // Streaming message sending (old schema with TaskSendParams)
     const sendMessageStream = useCallback(async (content: string, fileAttachments?: FileAttachment[]) => {
         const client = new A2AClient(agentUrl!, window.fetch.bind(window), authorizationHeader);
         const taskId = uuidv4();
         const messageId = uuidv4();
-        
-        // Получаем историю сообщений
+
+        // Get message history
         const messageHistory = getMessageHistory(messages);
         
         // Build parts: text + files
@@ -337,13 +363,16 @@ export const useChat = ({ agentUrl, isStreamingEnabled = false, contextId, autho
             parts.push(...buildFileParts(fileAttachments));
         }
         
-        // Создаем message объект с условным включением contextId
+        // Create message object:
+        // - Use taskId to continue conversation (follow-up messages)
+        // - Use contextId only for first message
         const streamMessage: Message = {
             messageId: messageId,
             role: "user",
             parts: parts,
             kind: "message",
-            ...(contextId && { contextId: contextId })
+            ...(currentTaskId && { taskId: currentTaskId }), // Follow-up: use saved taskId
+            ...(currentContextId && !currentTaskId && { contextId: currentContextId }) // First message: use contextId
         };
 
         const sendParams: TaskSendParams = {
@@ -360,7 +389,7 @@ export const useChat = ({ agentUrl, isStreamingEnabled = false, contextId, autho
             }
         };
 
-        console.log("Отправляем задачу (стриминг режим) с историей:", {
+        console.log("Sending task (streaming mode) with history:", {
             taskId,
             messageId,
             historyCount: messageHistory.length,
@@ -377,14 +406,26 @@ export const useChat = ({ agentUrl, isStreamingEnabled = false, contextId, autho
         const accumulatedParts: Part[] = [];
 
         try {
-            // Обрабатываем стрим
+            // Handle streaming events
             for await (const event of client.sendTaskSubscribe(sendParams)) {
                 console.log("Streaming event:", event);
-                
+
                 if (event && typeof event === 'object') {
+                    // Save taskId from first event for multi-turn conversations
+                    if ('id' in event && typeof event.id === 'string' && !currentTaskId) {
+                        console.log("Saving taskId from streaming event:", event.id);
+                        setCurrentTaskId(event.id);
+                    }
+
+                    // Save contextId if available in event
+                    if ('contextId' in event && typeof (event as any).contextId === 'string') {
+                        console.log("Saving contextId from streaming event:", (event as any).contextId);
+                        setCurrentContextId((event as any).contextId);
+                    }
+
                     let newTextChunk = "";
-                    
-                    // Обработка TaskStatusUpdateEvent
+
+                    // Handle TaskStatusUpdateEvent
                     if ('status' in event && event.status) {
                         const status = event.status as any;
                         if (status.message && status.message.parts) {
@@ -399,22 +440,22 @@ export const useChat = ({ agentUrl, isStreamingEnabled = false, contextId, autho
                         }
                     }
                     
-                    // Обработка TaskArtifactUpdateEvent
+                    // Handle TaskArtifactUpdateEvent
                     if ('artifact' in event && event.artifact) {
                         const artifact = event.artifact as any;
                         const appendMode = 'append' in event ? (event as any).append : false;
                         const hasArtifactParts = Array.isArray(artifact.parts) && artifact.parts.length > 0;
                         const hasUsefulArtifactContent = hasArtifactParts || !!artifact.description || !!artifact.metadata;
-                        
-                        // Игнорируем пустые placeholder artifacts (например, "response" с 0 parts)
+
+                        // Ignore empty placeholder artifacts (e.g., "response" with 0 parts)
                         if (!hasUsefulArtifactContent) {
                             continue;
                         }
                         
-                        // Добавляем или обновляем artifact к накопленным
+                        // Add or update accumulated artifacts
                         // Only store artifacts that have non-text parts (files, data, etc.)
                         const hasNonTextParts = artifact.parts && artifact.parts.some((p: any) => p.kind !== 'text');
-                        
+
                         if (hasNonTextParts) {
                             const existingIndex = accumulatedArtifacts.findIndex(a => a.artifactId === artifact.artifactId);
                             if (existingIndex >= 0) {
@@ -431,8 +472,8 @@ export const useChat = ({ agentUrl, isStreamingEnabled = false, contextId, autho
                             } else {
                                 accumulatedArtifacts.push(artifact);
                             }
-                            
-                            // Обновляем сообщение с новыми artifacts
+
+                            // Update message with new artifacts
                             if (agentMessageId) {
                                 setMessages(prev => 
                                     prev.map(msg => 
@@ -444,7 +485,7 @@ export const useChat = ({ agentUrl, isStreamingEnabled = false, contextId, autho
                             }
                         }
                         
-                        // Извлекаем текст из artifact для печатания
+                        // Extract text from artifact for typing
                         if (artifact.parts) {
                             const textParts = artifact.parts
                                 .filter((part: any) => part.kind === "text")
@@ -462,7 +503,7 @@ export const useChat = ({ agentUrl, isStreamingEnabled = false, contextId, autho
                         }
                     }
 
-                    // Если получили новый текст, объединяем cumulative/delta чанки
+                    // If we received new text, combine cumulative/delta chunks
                     if (newTextChunk) {
                         // Check if we're in append mode
                         const isAppendMode = 'append' in event && (event as any).append;
@@ -475,18 +516,18 @@ export const useChat = ({ agentUrl, isStreamingEnabled = false, contextId, autho
                             accumulatedText = newTextChunk;
                         }
                         
-                        // Создаем или обновляем сообщение
+                        // Create or update message
                         if (agentMessageId) {
-                            // Обновляем существующее сообщение
-                            setMessages(prev => 
-                                prev.map(msg => 
-                                    msg.id === agentMessageId 
-                                        ? { ...msg, content: accumulatedText + "▋" } // Показываем курсор
+                            // Update existing message
+                            setMessages(prev =>
+                                prev.map(msg =>
+                                    msg.id === agentMessageId
+                                        ? { ...msg, content: accumulatedText + "▋" } // Show cursor
                                         : msg
                                 )
                             );
                         } else {
-                            // Создаем новое сообщение при первом чанке
+                            // Create new message on first chunk
                             setMessages(prev => {
                                 const agentMessage: ChatMessage = {
                                     id: prev.length + 1,
@@ -504,18 +545,19 @@ export const useChat = ({ agentUrl, isStreamingEnabled = false, contextId, autho
                             setIsLoading(false);
                         }
                     }
-                        
-                    // Проверяем завершение
+
+
+                    // Check for completion
                     if ('final' in event && event.final) {
                         console.log("Streaming completed");
-                        // Завершаем и показываем полный текст без курсора с artifacts
+                        // Finish and show complete text without cursor with artifacts
                         if (agentMessageId) {
-                            setMessages(prev => 
-                                prev.map(msg => 
-                                    msg.id === agentMessageId 
-                                        ? { 
-                                            ...msg, 
-                                            content: accumulatedText, // Убираем курсор
+                            setMessages(prev =>
+                                prev.map(msg =>
+                                    msg.id === agentMessageId
+                                        ? {
+                                            ...msg,
+                                            content: accumulatedText, // Remove cursor
                                             artifacts: accumulatedArtifacts.length > 0 ? accumulatedArtifacts : undefined,
                                             // Only include parts if they have non-text content
                                             parts: accumulatedParts.length > 0 && accumulatedParts.some(p => p.kind !== 'text')
@@ -532,7 +574,7 @@ export const useChat = ({ agentUrl, isStreamingEnabled = false, contextId, autho
             }
         } catch (error) {
             console.error("Streaming error:", error);
-            // Показываем ошибку
+            // Show error
             if (agentMessageId) {
                 setMessages(prev => 
                     prev.map(msg => 
@@ -549,10 +591,10 @@ export const useChat = ({ agentUrl, isStreamingEnabled = false, contextId, autho
 
     const sendMessage = useCallback(async (content: string, fileAttachments?: FileAttachment[]) => {
         if ((!content.trim() && (!fileAttachments || fileAttachments.length === 0)) || isLoading || !agentUrl) return;
-        
-        // Останавливаем любую текущую анимацию печатания
+
+        // Stop any current typing animation
         stopTyping();
-        
+
         const userMessage: ChatMessage = {
             id: messages.length + 1,
             sender: "user",
@@ -562,7 +604,7 @@ export const useChat = ({ agentUrl, isStreamingEnabled = false, contextId, autho
             fileAttachments: fileAttachments && fileAttachments.length > 0 ? fileAttachments : undefined
         };
 
-        // Добавляем сообщение пользователя к истории
+        // Add user message to history
         const updatedMessages = [...messages, userMessage];
         setMessages(updatedMessages);
         setIsLoading(true);
@@ -607,12 +649,23 @@ export const useChat = ({ agentUrl, isStreamingEnabled = false, contextId, autho
         }
     }, [isLoading, agentUrl, messages, isStreamingEnabled, sendMessageSync, sendMessageStream, stopTyping]);
 
+    // Reset conversation state (clear taskId to start a new conversation)
+    const resetConversation = useCallback(() => {
+        console.log("Resetting conversation - clearing taskId");
+        setCurrentTaskId(null);
+        // Keep contextId if it was provided as a prop
+        setCurrentContextId(contextId || null);
+    }, [contextId]);
+
     return {
         messages,
         isLoading,
         messagesEndRef,
         scrollToBottom,
         sendMessage,
-        setMessages
+        setMessages,
+        resetConversation,
+        currentTaskId, // Expose for debugging/testing
+        currentContextId // Expose for debugging/testing
     };
 }; 
