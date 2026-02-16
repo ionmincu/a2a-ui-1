@@ -1,19 +1,35 @@
-import React, { useState, useRef, useEffect } from "react";
-import { Card, CardContent } from "@/components/ui/card";
-import { Switch } from "@/components/ui/switch";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { useChat } from "@/hooks/useChat";
-import { MessagesList } from "./MessagesList";
-import { ChatInput } from "./ChatInput";
-import { AgentCard } from "@/a2a/schema";
-import { StateConversation } from "@/a2a/state";
-import { useAppState } from "@/a2a/state/app/appStateContext";
-import { v4 as uuidv4 } from "uuid";
-import { RefreshCw, Copy, Check } from "lucide-react";
-import { TraceSidebar } from "./TraceSidebar";
-import { useTrace } from "@/hooks/useTrace";
-import { useSettingsState } from "@/a2a/state/settings/settingsStateContext";
+import React, {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from 'react';
+
+import {
+  Check,
+  Copy,
+  RefreshCw,
+} from 'lucide-react';
+import { v4 as uuidv4 } from 'uuid';
+
+import { AgentCard } from '@/a2a/schema';
+import { StateConversation } from '@/a2a/state';
+import { useAppState } from '@/a2a/state/app/appStateContext';
+import { useSettingsState } from '@/a2a/state/settings/settingsStateContext';
+import { Button } from '@/components/ui/button';
+import {
+  Card,
+  CardContent,
+} from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
+import { Switch } from '@/components/ui/switch';
+import { useChat } from '@/hooks/useChat';
+import { useTrace } from '@/hooks/useTrace';
+import { FileAttachment } from '@/types/chat';
+
+import { ChatInput } from './ChatInput';
+import { MessagesList } from './MessagesList';
+import { TraceSidebar } from './TraceSidebar';
 
 interface ChatContainerProps {
     selectedAgent: AgentCard | null;
@@ -29,6 +45,7 @@ export const ChatContainer: React.FC<ChatContainerProps> = ({
     onChatTabChange
 }) => {
     const [newMessage, setNewMessage] = useState<string>("");
+    const [fileAttachments, setFileAttachments] = useState<FileAttachment[]>([]);
     const [isStreamingEnabled, setIsStreamingEnabled] = useState<boolean>(false);
     const [editingContextId, setEditingContextId] = useState<boolean>(false);
     const [tempContextId, setTempContextId] = useState<string>("");
@@ -64,17 +81,19 @@ export const ChatContainer: React.FC<ChatContainerProps> = ({
     }, [onChatTabChange]);
 
     const handleSendMessage = async () => {
-        if (!newMessage.trim() || isLoading) return;
+        if ((!newMessage.trim() && fileAttachments.filter(f => f.status === 'ready').length === 0) || isLoading) return;
         
         const messageToSend = newMessage;
+        const filesToSend = fileAttachments.filter(f => f.status === 'ready');
         setNewMessage("");
+        setFileAttachments([]);
         
         // Keep focus on input field for continuous typing
         setTimeout(() => {
             inputRef.current?.focus();
         }, 0);
 
-        await sendMessage(messageToSend);
+        await sendMessage(messageToSend, filesToSend.length > 0 ? filesToSend : undefined);
         
         // Автоматически обновляем трейсы после отправки сообщения с задержкой
         // чтобы дать время для генерации трейсов на сервере
@@ -97,6 +116,14 @@ export const ChatContainer: React.FC<ChatContainerProps> = ({
             handleSendMessage();
         }
     };
+
+    const handleFileAttachmentsChange = useCallback((filesOrUpdater: FileAttachment[] | ((prev: FileAttachment[]) => FileAttachment[])) => {
+        if (typeof filesOrUpdater === 'function') {
+            setFileAttachments(filesOrUpdater);
+        } else {
+            setFileAttachments(filesOrUpdater);
+        }
+    }, []);
 
     // Проверяем, поддерживает ли агент стриминг
     const isStreamingSupported = selectedAgent?.capabilities?.streaming ?? false;
@@ -192,6 +219,8 @@ export const ChatContainer: React.FC<ChatContainerProps> = ({
                             onSend={handleSendMessage}
                             onKeyDown={handleKeyDown}
                             disabled={isLoading}
+                            fileAttachments={fileAttachments}
+                            onFileAttachmentsChange={handleFileAttachmentsChange}
                         />
                     </CardContent>
                 </Card>

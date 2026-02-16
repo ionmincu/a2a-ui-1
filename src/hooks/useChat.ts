@@ -16,7 +16,10 @@ import {
   Part,
   TaskSendParams,
 } from '@/a2a/schema';
-import { ChatMessage } from '@/types/chat';
+import {
+  ChatMessage,
+  FileAttachment,
+} from '@/types/chat';
 
 interface UseChatProps {
     agentUrl?: string;
@@ -186,13 +189,38 @@ export const useChat = ({ agentUrl, isStreamingEnabled = false, contextId, autho
         return messagesToInclude.map(convertChatMessageToA2AMessage);
     }, [convertChatMessageToA2AMessage]);
 
+    // Helper: convert FileAttachment[] to A2A Part[]
+    const buildFileParts = useCallback((files: FileAttachment[]): Part[] => {
+        return files
+            .filter(f => f.status === 'ready' && f.base64)
+            .map(f => {
+                // A2A 0.3.1-preview: "kind" discriminator inside file object
+                const part = {
+                    kind: 'file' as const,
+                    file: {
+                        kind: 'bytes',
+                        bytes: f.base64!,
+                        name: f.name,
+                        mimeType: f.type || 'application/octet-stream',
+                    },
+                };
+                return part as unknown as Part;
+            });
+    }, []);
+
     // Обычная отправка сообщения (новая схема)
-    const sendMessageSync = useCallback(async (content: string) => {
+    const sendMessageSync = useCallback(async (content: string, fileAttachments?: FileAttachment[]) => {
         const client = new A2AClient(agentUrl!, window.fetch.bind(window), authorizationHeader);
         const messageId = uuidv4();
         
         // Получаем историю сообщений
         const messageHistory = getMessageHistory(messages);
+        
+        // Build parts: text + files
+        const parts: Part[] = [{ text: content, kind: "text" }];
+        if (fileAttachments && fileAttachments.length > 0) {
+            parts.push(...buildFileParts(fileAttachments));
+        }
         
         // Создаем конфигурацию
         const configuration: MessageSendConfiguration = {
@@ -205,7 +233,7 @@ export const useChat = ({ agentUrl, isStreamingEnabled = false, contextId, autho
         const message: Message = {
             messageId: messageId,
             role: "user",
-            parts: [{ text: content, kind: "text" }],
+            parts: parts,
             kind: "message",
             ...(contextId && { contextId: contextId })
         };
@@ -292,10 +320,10 @@ export const useChat = ({ agentUrl, isStreamingEnabled = false, contextId, autho
         }
 
         return { text: agentResponse, parts: responseParts, artifacts: responseArtifacts };
-    }, [agentUrl, authorizationHeader, messages, getMessageHistory]);
+    }, [agentUrl, authorizationHeader, messages, getMessageHistory, buildFileParts]);
 
     // Стриминговая отправка сообщения (старая схема с TaskSendParams)
-    const sendMessageStream = useCallback(async (content: string) => {
+    const sendMessageStream = useCallback(async (content: string, fileAttachments?: FileAttachment[]) => {
         const client = new A2AClient(agentUrl!, window.fetch.bind(window), authorizationHeader);
         const taskId = uuidv4();
         const messageId = uuidv4();
@@ -303,11 +331,17 @@ export const useChat = ({ agentUrl, isStreamingEnabled = false, contextId, autho
         // Получаем историю сообщений
         const messageHistory = getMessageHistory(messages);
         
+        // Build parts: text + files
+        const parts: Part[] = [{ text: content, kind: "text" }];
+        if (fileAttachments && fileAttachments.length > 0) {
+            parts.push(...buildFileParts(fileAttachments));
+        }
+        
         // Создаем message объект с условным включением contextId
         const streamMessage: Message = {
             messageId: messageId,
             role: "user",
-            parts: [{ text: content, kind: "text" }],
+            parts: parts,
             kind: "message",
             ...(contextId && { contextId: contextId })
         };
@@ -511,10 +545,10 @@ export const useChat = ({ agentUrl, isStreamingEnabled = false, contextId, autho
         }
 
         return accumulatedText;
-    }, [agentUrl, authorizationHeader, messages, getMessageHistory, simulateTyping, stopTyping]);
+    }, [agentUrl, authorizationHeader, messages, getMessageHistory, simulateTyping, stopTyping, buildFileParts]);
 
-    const sendMessage = useCallback(async (content: string) => {
-        if (!content.trim() || isLoading || !agentUrl) return;
+    const sendMessage = useCallback(async (content: string, fileAttachments?: FileAttachment[]) => {
+        if ((!content.trim() && (!fileAttachments || fileAttachments.length === 0)) || isLoading || !agentUrl) return;
         
         // Останавливаем любую текущую анимацию печатания
         stopTyping();
@@ -524,7 +558,8 @@ export const useChat = ({ agentUrl, isStreamingEnabled = false, contextId, autho
             sender: "user",
             content,
             senderName: "You",
-            timestamp: new Date()
+            timestamp: new Date(),
+            fileAttachments: fileAttachments && fileAttachments.length > 0 ? fileAttachments : undefined
         };
 
         // Добавляем сообщение пользователя к истории
@@ -534,9 +569,9 @@ export const useChat = ({ agentUrl, isStreamingEnabled = false, contextId, autho
 
         try {
             if (isStreamingEnabled) {
-                await sendMessageStream(content);
+                await sendMessageStream(content, fileAttachments);
             } else {
-                const syncResponse = await sendMessageSync(content);
+                const syncResponse = await sendMessageSync(content, fileAttachments);
                 
                 setMessages(prev => {
                     const agentMessage: ChatMessage = {

@@ -332,6 +332,11 @@ export interface PartBase {
  */
 export interface FileWithBytes {
   /**
+   * Discriminator for the .NET A2A SDK polymorphic deserialization.
+   */
+  type: "FileWithBytes";
+
+  /**
    * Optional name of the file.
    */
   name?: string;
@@ -351,6 +356,11 @@ export interface FileWithBytes {
  * File content with URI.
  */
 export interface FileWithUri {
+  /**
+   * Discriminator for the .NET A2A SDK polymorphic deserialization.
+   */
+  type: "FileWithUri";
+
   /**
    * Optional name of the file.
    */
@@ -384,6 +394,8 @@ export interface TextPart extends PartBase {
 
 /**
  * Represents a File segment within parts.
+ * The .NET A2A SDK 0.3.x requires a nested 'file' property containing
+ * a FileWithBytes or FileWithUri with a 'type' discriminator.
  */
 export interface FilePart extends PartBase {
   /**

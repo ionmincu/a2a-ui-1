@@ -1,8 +1,45 @@
-import React from "react";
-import { Artifact, Part } from "@/a2a/schema";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
-import { FileText, Database, Download } from "lucide-react";
+import React from 'react';
+
+import {
+  Database,
+  Download,
+  FileText,
+} from 'lucide-react';
+
+import {
+  Artifact,
+  Part,
+} from '@/a2a/schema';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from '@/components/ui/card';
+
+/**
+ * Download a base64 encoded file.
+ */
+function downloadBase64File(base64: string, filename: string, mimeType: string) {
+    const byteCharacters = atob(base64);
+    const byteNumbers = new Array(byteCharacters.length);
+    for (let i = 0; i < byteCharacters.length; i++) {
+        byteNumbers[i] = byteCharacters.charCodeAt(i);
+    }
+    const byteArray = new Uint8Array(byteNumbers);
+    const blob = new Blob([byteArray], { type: mimeType || 'application/octet-stream' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename || 'download';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+}
 
 interface ArtifactDisplayProps {
     artifact: Artifact;
@@ -33,7 +70,12 @@ const PartDisplay: React.FC<PartDisplayProps> = ({ part, index }) => {
                 </div>
             );
 
-        case "file":
+        case "file": {
+            const fileData = part.file;
+            const isImage = fileData.mimeType?.startsWith('image/');
+            const bytesContent = 'bytes' in fileData ? fileData.bytes : undefined;
+            const uriContent = 'uri' in fileData ? fileData.uri : undefined;
+
             return (
                 <div className="space-y-2">
                     <div className="flex items-center gap-2">
@@ -42,28 +84,63 @@ const PartDisplay: React.FC<PartDisplayProps> = ({ part, index }) => {
                     </div>
                     <div className="bg-muted/50 rounded-md p-3">
                         <div className="text-sm">
-                            <strong>Name:</strong> {part.file.name || "Untitled file"}
+                            <strong>Name:</strong> {fileData.name || "Untitled file"}
                         </div>
-                        {part.file.mimeType && (
+                        {fileData.mimeType && (
                             <div className="text-sm">
-                                <strong>Type:</strong> {part.file.mimeType}
+                                <strong>Type:</strong> {fileData.mimeType}
                             </div>
                         )}
-                        {"uri" in part.file ? (
+                        {/* Inline image preview */}
+                        {isImage && bytesContent && (
+                            <div className="mt-2">
+                                <img
+                                    src={`data:${fileData.mimeType};base64,${bytesContent}`}
+                                    alt={fileData.name || 'Image'}
+                                    className="max-w-full max-h-64 rounded-md border"
+                                />
+                            </div>
+                        )}
+                        {isImage && uriContent && (
+                            <div className="mt-2">
+                                <img
+                                    src={uriContent}
+                                    alt={fileData.name || 'Image'}
+                                    className="max-w-full max-h-64 rounded-md border"
+                                />
+                            </div>
+                        )}
+                        {uriContent && (
                             <div className="text-sm">
                                 <strong>URL:</strong>{" "}
                                 <a
-                                    href={part.file.uri}
+                                    href={uriContent}
                                     target="_blank"
                                     rel="noopener noreferrer"
                                     className="text-primary hover:underline"
                                 >
-                                    {part.file.uri}
+                                    {uriContent}
                                 </a>
                             </div>
-                        ) : (
-                            <div className="text-sm text-muted-foreground">
-                                File content available as base64 data ({part.file.bytes.length} chars)
+                        )}
+                        {bytesContent && (
+                            <div className="flex items-center gap-2 mt-2">
+                                <span className="text-sm text-muted-foreground">
+                                    Base64 data ({bytesContent.length} chars)
+                                </span>
+                                <Button
+                                    variant="outline"
+                                    size="sm"
+                                    className="h-7 text-xs"
+                                    onClick={() => downloadBase64File(
+                                        bytesContent,
+                                        fileData.name || 'download',
+                                        fileData.mimeType || 'application/octet-stream'
+                                    )}
+                                >
+                                    <Download className="h-3 w-3 mr-1" />
+                                    Download
+                                </Button>
                             </div>
                         )}
                     </div>
@@ -74,6 +151,7 @@ const PartDisplay: React.FC<PartDisplayProps> = ({ part, index }) => {
                     )}
                 </div>
             );
+        }
 
         case "data":
             return (

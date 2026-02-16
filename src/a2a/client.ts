@@ -423,80 +423,75 @@ export class A2AClient {
       return this.cachedAgentCard;
     }
 
-    // 1) Try well-known endpoint first - try both common paths
-    const wellKnownPaths = [
-      '/.well-known/agent-card.json',  // Try this first (shown in Postman)
-      '/.well-known/agent.json',        // Standard A2A path
-    ];
+    // 1) Try well-known endpoint first
+    const wellKnownPath = '/.well-known/agent-card.json';
     
-    for (const wellKnownPath of wellKnownPaths) {
-      try {
-        const wellKnownUrl = `${this.baseUrl}${wellKnownPath}`;
-        
-        console.log(`[A2AClient] Attempting to fetch agent card from well-known URL: ${wellKnownUrl}`);
-        
-        let res: Response;
-        
-        if (this.useProxy) {
-          // Use proxy endpoint for well-known URL
-          const customHeaders: Record<string, string> = {};
-          if (this.authorizationHeader) {
-            customHeaders["Authorization"] = this.authorizationHeader;
-          }
-          
-          const proxyRequestBody = {
-            url: wellKnownUrl,
-            method: "GET",
-            headers: {
-              Accept: "application/json",
-            },
-            customHeaders,
-          };
-          
-          res = await this._fetchWithTimeout(this.proxyUrl, {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify(proxyRequestBody),
-          });
-        } else {
-          // Direct request without proxy
-          const headers: HeadersInit = { Accept: "application/json" };
-          
-          if (this.authorizationHeader) {
-            headers["Authorization"] = this.authorizationHeader;
-          }
-          
-          res = await this._fetchWithTimeout(wellKnownUrl, {
-            method: "GET",
-            headers,
-          });
+    try {
+      const wellKnownUrl = `${this.baseUrl}${wellKnownPath}`;
+      
+      console.log(`[A2AClient] Attempting to fetch agent card from well-known URL: ${wellKnownUrl}`);
+      
+      let res: Response;
+      
+      if (this.useProxy) {
+        // Use proxy endpoint for well-known URL
+        const customHeaders: Record<string, string> = {};
+        if (this.authorizationHeader) {
+          customHeaders["Authorization"] = this.authorizationHeader;
         }
         
-        console.log(`[A2AClient] Well-known endpoint (${wellKnownPath}) response: ${res.status} ${res.statusText}`);
+        const proxyRequestBody = {
+          url: wellKnownUrl,
+          method: "GET",
+          headers: {
+            Accept: "application/json",
+          },
+          customHeaders,
+        };
         
-        if (res.ok) {
-          const json = (await res.json()) as AgentCard;
-          console.log(`[A2AClient] Successfully fetched agent card from well-known endpoint:`, json.name);
-          this.cachedAgentCard = json;
-          return json;
-        } else if (res.status !== 404) {
-          const errorText = await res.text();
-          console.warn(`[A2AClient] Well-known endpoint (${wellKnownPath}) returned ${res.status}: ${errorText}`);
-          // If well-known endpoint exists but returns an error, don't fallback to JSON-RPC
-          throw new Error(`Agent card endpoint returned ${res.status}: ${errorText || res.statusText}`);
-        } else {
-          console.log(`[A2AClient] Well-known endpoint (${wellKnownPath}) not found (404), trying next path...`);
+        res = await this._fetchWithTimeout(this.proxyUrl, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(proxyRequestBody),
+        });
+      } else {
+        // Direct request without proxy
+        const headers: HeadersInit = { Accept: "application/json" };
+        
+        if (this.authorizationHeader) {
+          headers["Authorization"] = this.authorizationHeader;
         }
-      } catch (error) {
-        console.warn(`[A2AClient] Failed to fetch from well-known endpoint (${wellKnownPath}):`, error instanceof Error ? error.message : error);
-        // If it's not a 404, re-throw the error instead of falling back
-        if (error instanceof Error && !error.message.includes('404')) {
-          throw new Error(`Failed to fetch agent card from well-known endpoint: ${error.message}`);
-        }
-        /* otherwise continue to next path */
+        
+        res = await this._fetchWithTimeout(wellKnownUrl, {
+          method: "GET",
+          headers,
+        });
       }
+      
+      console.log(`[A2AClient] Well-known endpoint response: ${res.status} ${res.statusText}`);
+      
+      if (res.ok) {
+        const json = (await res.json()) as AgentCard;
+        console.log(`[A2AClient] Successfully fetched agent card from well-known endpoint:`, json.name);
+        this.cachedAgentCard = json;
+        return json;
+      } else if (res.status !== 404) {
+        const errorText = await res.text();
+        console.warn(`[A2AClient] Well-known endpoint returned ${res.status}: ${errorText}`);
+        // If well-known endpoint exists but returns an error, don't fallback to JSON-RPC
+        throw new Error(`Agent card endpoint returned ${res.status}: ${errorText || res.statusText}`);
+      } else {
+        console.log(`[A2AClient] Well-known endpoint not found (404), trying JSON-RPC fallback...`);
+      }
+    } catch (error) {
+      console.warn(`[A2AClient] Failed to fetch from well-known endpoint:`, error instanceof Error ? error.message : error);
+      // If it's not a 404, re-throw the error instead of falling back
+      if (error instanceof Error && !error.message.includes('404')) {
+        throw new Error(`Failed to fetch agent card from well-known endpoint: ${error.message}`);
+      }
+      /* otherwise continue to JSON-RPC fallback */
     }
 
     // 2) Fallback to JSON-RPC "agent/card"
