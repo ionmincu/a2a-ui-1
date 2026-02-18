@@ -15,6 +15,15 @@ export interface FileAttachment {
     error?: string;
 }
 
+export interface ToolCall {
+    toolCallId: string;
+    toolName: string;
+    phase: 'start' | 'end';
+    input?: Record<string, any>;
+    output?: string;
+    timestamp: Date;
+}
+
 export interface ChatMessage {
     id: number;
     sender: "agent" | "user";
@@ -24,6 +33,7 @@ export interface ChatMessage {
     artifacts?: Artifact[];
     parts?: Part[];
     fileAttachments?: FileAttachment[];
+    toolCalls?: ToolCall[];
 }
 
 export type TabType = "chat" | "chats" | "agents" | "events" | "tasks" | "settings"; 

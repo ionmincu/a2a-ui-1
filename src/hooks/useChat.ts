@@ -19,6 +19,7 @@ import {
 import {
   ChatMessage,
   FileAttachment,
+  ToolCall,
 } from '@/types/chat';
 
 interface UseChatProps {
@@ -236,6 +237,7 @@ export const useChat = ({ agentUrl, isStreamingEnabled = false, contextId, autho
         // Create message object:
         // - Use taskId to continue conversation (follow-up messages)
         // - Use contextId only for first message
+        console.log("🔍 Building message - currentTaskId:", currentTaskId, "currentContextId:", currentContextId);
         const message: Message = {
             messageId: messageId,
             role: "user",
@@ -268,14 +270,25 @@ export const useChat = ({ agentUrl, isStreamingEnabled = false, contextId, autho
         console.log("SendMessageParams:", JSON.stringify(sendParams, null, 2));
 
         const responseMessage = await client.sendMessage(sendParams);
-        console.log("Message Result:", responseMessage);
+        console.log("Message Result (full structure):", JSON.stringify(responseMessage, null, 2));
 
         // Save taskId and contextId from response for multi-turn conversations
         if (responseMessage) {
-            // Extract taskId from Task response
+            // Extract taskId - can be either 'id' (Task) or 'taskId' (Message)
+            let extractedTaskId: string | null = null;
+
             if ('id' in responseMessage && typeof responseMessage.id === 'string') {
-                console.log("Saving taskId for multi-turn conversation:", responseMessage.id);
-                setCurrentTaskId(responseMessage.id);
+                extractedTaskId = responseMessage.id;
+                console.log("✅ Saving taskId from Task.id:", extractedTaskId);
+            } else if ('taskId' in responseMessage && typeof (responseMessage as any).taskId === 'string') {
+                extractedTaskId = (responseMessage as any).taskId;
+                console.log("✅ Saving taskId from Message.taskId:", extractedTaskId);
+            } else {
+                console.warn("⚠️ No taskId found in response. Response keys:", Object.keys(responseMessage));
+            }
+
+            if (extractedTaskId) {
+                setCurrentTaskId(extractedTaskId);
             }
 
             // Extract contextId if available in the response
@@ -366,6 +379,7 @@ export const useChat = ({ agentUrl, isStreamingEnabled = false, contextId, autho
         // Create message object:
         // - Use taskId to continue conversation (follow-up messages)
         // - Use contextId only for first message
+        console.log("🔍 Building streaming message - currentTaskId:", currentTaskId, "currentContextId:", currentContextId);
         const streamMessage: Message = {
             messageId: messageId,
             role: "user",
@@ -404,6 +418,7 @@ export const useChat = ({ agentUrl, isStreamingEnabled = false, contextId, autho
         let accumulatedText = "";
         const accumulatedArtifacts: Artifact[] = [];
         const accumulatedParts: Part[] = [];
+        const accumulatedToolCalls: ToolCall[] = [];
 
         try {
             // Handle streaming events
@@ -412,8 +427,8 @@ export const useChat = ({ agentUrl, isStreamingEnabled = false, contextId, autho
 
                 if (event && typeof event === 'object') {
                     // Save taskId from first event for multi-turn conversations
-                    if ('id' in event && typeof event.id === 'string' && !currentTaskId) {
-                        console.log("Saving taskId from streaming event:", event.id);
+                    if ('id' in event && typeof event.id === 'string') {
+                        console.log("✅ Saving taskId from streaming event:", event.id);
                         setCurrentTaskId(event.id);
                     }
 
@@ -424,16 +439,61 @@ export const useChat = ({ agentUrl, isStreamingEnabled = false, contextId, autho
                     }
 
                     let newTextChunk = "";
+                    let toolCallUpdate = false;
 
                     // Handle TaskStatusUpdateEvent
                     if ('status' in event && event.status) {
                         const status = event.status as any;
-                        if (status.message && status.message.parts) {
+                        if (status.message && status.message.metadata) {
+                            const meta = status.message.metadata;
+
+                            // Detect tool call events
+                            if (meta.toolCallPhase === 'start' && meta.toolCallId) {
+                                const toolCall: ToolCall = {
+                                    toolCallId: meta.toolCallId,
+                                    toolName: meta.toolName || 'unknown',
+                                    phase: 'start',
+                                    input: meta.toolCallInput,
+                                    timestamp: new Date()
+                                };
+                                accumulatedToolCalls.push(toolCall);
+                                toolCallUpdate = true;
+                                console.log("Tool call started:", meta.toolName, meta.toolCallInput);
+                            } else if (meta.toolCallPhase === 'end' && meta.toolCallId) {
+                                const existingIdx = accumulatedToolCalls.findIndex(
+                                    tc => tc.toolCallId === meta.toolCallId
+                                );
+                                const outputText = Array.isArray(meta.toolCallOutput)
+                                    ? meta.toolCallOutput.map((o: any) => o.text || '').join('\n')
+                                    : typeof meta.toolCallOutput === 'string' ? meta.toolCallOutput : '';
+                                if (existingIdx >= 0) {
+                                    accumulatedToolCalls[existingIdx] = {
+                                        ...accumulatedToolCalls[existingIdx],
+                                        phase: 'end',
+                                        output: outputText,
+                                        timestamp: new Date()
+                                    };
+                                } else {
+                                    accumulatedToolCalls.push({
+                                        toolCallId: meta.toolCallId,
+                                        toolName: meta.toolName || 'unknown',
+                                        phase: 'end',
+                                        output: outputText,
+                                        timestamp: new Date()
+                                    });
+                                }
+                                toolCallUpdate = true;
+                                console.log("Tool call completed:", meta.toolCallId);
+                            }
+                        }
+
+                        // Extract text from non-tool-call status messages
+                        if (status.message && status.message.parts && !toolCallUpdate) {
                             const textParts = status.message.parts
                                 .filter((part: any) => part.kind === "text")
                                 .map((part: any) => part.text)
                                 .join("");
-                            
+
                             if (textParts) {
                                 newTextChunk = textParts;
                             }
@@ -507,41 +567,46 @@ export const useChat = ({ agentUrl, isStreamingEnabled = false, contextId, autho
                     if (newTextChunk) {
                         // Check if we're in append mode
                         const isAppendMode = 'append' in event && (event as any).append;
-                        
+
                         if (isAppendMode) {
-                            // In append mode, always append the new chunk
                             accumulatedText = accumulatedText + newTextChunk;
                         } else {
-                            // In replace mode (append=false), replace accumulated text
                             accumulatedText = newTextChunk;
                         }
-                        
-                        // Create or update message
+                    }
+
+                    // Create or update message when we have text or tool call updates
+                    if (newTextChunk || toolCallUpdate) {
                         if (agentMessageId) {
                             // Update existing message
                             setMessages(prev =>
                                 prev.map(msg =>
                                     msg.id === agentMessageId
-                                        ? { ...msg, content: accumulatedText + "▋" } // Show cursor
+                                        ? {
+                                            ...msg,
+                                            content: newTextChunk ? accumulatedText + "▋" : msg.content,
+                                            toolCalls: [...accumulatedToolCalls]
+                                        }
                                         : msg
                                 )
                             );
                         } else {
-                            // Create new message on first chunk
+                            // Create new message on first chunk or tool call
                             setMessages(prev => {
                                 const agentMessage: ChatMessage = {
                                     id: prev.length + 1,
                                     sender: "agent",
-                                    content: accumulatedText + "▋",
+                                    content: newTextChunk ? accumulatedText + "▋" : "",
                                     senderName: "Assistant",
                                     timestamp: new Date(),
                                     artifacts: [],
-                                    parts: []
+                                    parts: [],
+                                    toolCalls: [...accumulatedToolCalls]
                                 };
                                 agentMessageId = agentMessage.id;
                                 return [...prev, agentMessage];
                             });
-                            // Hide typing indicator once we receive the first message chunk
+                            // Hide typing indicator once we receive the first event
                             setIsLoading(false);
                         }
                     }
@@ -550,7 +615,7 @@ export const useChat = ({ agentUrl, isStreamingEnabled = false, contextId, autho
                     // Check for completion
                     if ('final' in event && event.final) {
                         console.log("Streaming completed");
-                        // Finish and show complete text without cursor with artifacts
+                        // Finish and show complete text without cursor with artifacts and tool calls
                         if (agentMessageId) {
                             setMessages(prev =>
                                 prev.map(msg =>
@@ -559,10 +624,10 @@ export const useChat = ({ agentUrl, isStreamingEnabled = false, contextId, autho
                                             ...msg,
                                             content: accumulatedText, // Remove cursor
                                             artifacts: accumulatedArtifacts.length > 0 ? accumulatedArtifacts : undefined,
-                                            // Only include parts if they have non-text content
                                             parts: accumulatedParts.length > 0 && accumulatedParts.some(p => p.kind !== 'text')
                                                 ? accumulatedParts
-                                                : undefined
+                                                : undefined,
+                                            toolCalls: accumulatedToolCalls.length > 0 ? accumulatedToolCalls : undefined
                                         }
                                         : msg
                                 )

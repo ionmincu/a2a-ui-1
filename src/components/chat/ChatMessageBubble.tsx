@@ -15,6 +15,7 @@ import {
 
 import { ArtifactDisplay } from './ArtifactDisplay';
 import { PartsDisplay } from './PartsDisplay';
+import { ToolCallDisplay } from './ToolCallDisplay';
 
 interface ChatMessageBubbleProps {
     message: ChatMessage;
@@ -98,6 +99,11 @@ export const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = ({ message })
             </div>
             
             <div className="max-w-[70%] space-y-2">
+                {/* Tool calls (shown above the message bubble for agent messages) */}
+                {message.sender === "agent" && message.toolCalls && message.toolCalls.length > 0 && (
+                    <ToolCallDisplay toolCalls={message.toolCalls} />
+                )}
+
                 {/* Message bubble */}
                 {message.content && (
                     <div className={`relative px-4 py-3 rounded-2xl text-sm whitespace-pre-wrap break-words ${
@@ -111,7 +117,7 @@ export const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = ({ message })
                         {message.sender === "user" && message.fileAttachments && message.fileAttachments.length > 0 && (
                             <UserFileAttachments files={message.fileAttachments} />
                         )}
-                        
+
                         {/* Timestamp */}
                         <div className={`text-xs mt-1 ${
                             message.sender === "user" ? "text-primary-foreground/70" : "text-muted-foreground"
