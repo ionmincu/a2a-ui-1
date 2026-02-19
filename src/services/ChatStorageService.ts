@@ -2,19 +2,19 @@ import { Artifact, Part } from '@/a2a/schema';
 import { ChatMessage, ToolCall } from '@/types/chat';
 
 /**
- * Interface for persisting chat conversation data.
- * Swap the implementation (e.g. LocalStorageChatStorage → RemoteA2AChatStorage)
+ * Async interface for persisting chat conversation data.
+ * Swap the implementation (e.g. IndexedDBChatStorage → RemoteA2AChatStorage)
  * without touching hooks or components.
  */
 export interface IChatStorageService {
-    loadMessages(conversationId: string): ChatMessage[] | null;
-    saveMessages(conversationId: string, messages: ChatMessage[]): void;
-    loadTaskId(conversationId: string): string | null;
-    saveTaskId(conversationId: string, taskId: string | null): void;
-    removeConversation(conversationId: string): void;
+    loadMessages(conversationId: string): Promise<ChatMessage[] | null>;
+    saveMessages(conversationId: string, messages: ChatMessage[]): Promise<void>;
+    loadTaskId(conversationId: string): Promise<string | null>;
+    saveTaskId(conversationId: string, taskId: string | null): Promise<void>;
+    removeConversation(conversationId: string): Promise<void>;
 }
 
-// Serializable shape stored in localStorage (Date → string, File objects stripped)
+/** Shape stored in IndexedDB (Date serialised as ISO string, File objects stripped). */
 interface StoredChatMessage {
     id: number;
     sender: "agent" | "user";
@@ -26,28 +26,75 @@ interface StoredChatMessage {
     toolCalls?: ToolCall[];
 }
 
-const MESSAGES_KEY = "a2a_chat_messages_";
-const TASK_ID_KEY = "a2a_task_id_";
+const DB_NAME = "a2a_chat_db";
+const DB_VERSION = 1;
+const MESSAGES_STORE = "messages";
+const TASK_IDS_STORE = "taskIds";
 
-export class LocalStorageChatStorage implements IChatStorageService {
+function openDB(): Promise<IDBDatabase> {
+    return new Promise((resolve, reject) => {
+        const request = indexedDB.open(DB_NAME, DB_VERSION);
 
-    loadMessages(conversationId: string): ChatMessage[] | null {
+        request.onupgradeneeded = () => {
+            const db = request.result;
+            if (!db.objectStoreNames.contains(MESSAGES_STORE)) {
+                db.createObjectStore(MESSAGES_STORE);
+            }
+            if (!db.objectStoreNames.contains(TASK_IDS_STORE)) {
+                db.createObjectStore(TASK_IDS_STORE);
+            }
+        };
+
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+    });
+}
+
+function idbGet<T>(storeName: string, key: string): Promise<T | undefined> {
+    return openDB().then(db => new Promise((resolve, reject) => {
+        const tx = db.transaction(storeName, "readonly");
+        const req = tx.objectStore(storeName).get(key);
+        req.onsuccess = () => resolve(req.result as T | undefined);
+        req.onerror = () => reject(req.error);
+    }));
+}
+
+function idbPut(storeName: string, key: string, value: unknown): Promise<void> {
+    return openDB().then(db => new Promise((resolve, reject) => {
+        const tx = db.transaction(storeName, "readwrite");
+        tx.objectStore(storeName).put(value, key);
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+    }));
+}
+
+function idbDelete(storeName: string, key: string): Promise<void> {
+    return openDB().then(db => new Promise((resolve, reject) => {
+        const tx = db.transaction(storeName, "readwrite");
+        tx.objectStore(storeName).delete(key);
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+    }));
+}
+
+export class IndexedDBChatStorage implements IChatStorageService {
+
+    async loadMessages(conversationId: string): Promise<ChatMessage[] | null> {
         try {
-            const raw = localStorage.getItem(MESSAGES_KEY + conversationId);
-            if (raw) {
-                const parsed: StoredChatMessage[] = JSON.parse(raw);
-                return parsed.map(msg => ({
+            const stored = await idbGet<StoredChatMessage[]>(MESSAGES_STORE, conversationId);
+            if (stored) {
+                return stored.map(msg => ({
                     ...msg,
                     timestamp: new Date(msg.timestamp),
                 }));
             }
         } catch (error) {
-            console.error("Failed to load chat messages:", error);
+            console.error("Failed to load chat messages from IndexedDB:", error);
         }
         return null;
     }
 
-    saveMessages(conversationId: string, messages: ChatMessage[]): void {
+    async saveMessages(conversationId: string, messages: ChatMessage[]): Promise<void> {
         try {
             const serializable: StoredChatMessage[] = messages.map(
                 ({ fileAttachments, timestamp, ...rest }) => ({
@@ -55,41 +102,43 @@ export class LocalStorageChatStorage implements IChatStorageService {
                     timestamp: timestamp instanceof Date ? timestamp.toISOString() : String(timestamp),
                 })
             );
-            localStorage.setItem(MESSAGES_KEY + conversationId, JSON.stringify(serializable));
+            await idbPut(MESSAGES_STORE, conversationId, serializable);
         } catch (error) {
-            console.error("Failed to save chat messages:", error);
+            console.error("Failed to save chat messages to IndexedDB:", error);
         }
     }
 
-    loadTaskId(conversationId: string): string | null {
+    async loadTaskId(conversationId: string): Promise<string | null> {
         try {
-            return localStorage.getItem(TASK_ID_KEY + conversationId);
+            return (await idbGet<string>(TASK_IDS_STORE, conversationId)) ?? null;
         } catch {
             return null;
         }
     }
 
-    saveTaskId(conversationId: string, taskId: string | null): void {
+    async saveTaskId(conversationId: string, taskId: string | null): Promise<void> {
         try {
             if (taskId) {
-                localStorage.setItem(TASK_ID_KEY + conversationId, taskId);
+                await idbPut(TASK_IDS_STORE, conversationId, taskId);
             } else {
-                localStorage.removeItem(TASK_ID_KEY + conversationId);
+                await idbDelete(TASK_IDS_STORE, conversationId);
             }
         } catch (error) {
-            console.error("Failed to save task ID:", error);
+            console.error("Failed to save task ID to IndexedDB:", error);
         }
     }
 
-    removeConversation(conversationId: string): void {
+    async removeConversation(conversationId: string): Promise<void> {
         try {
-            localStorage.removeItem(MESSAGES_KEY + conversationId);
-            localStorage.removeItem(TASK_ID_KEY + conversationId);
+            await Promise.all([
+                idbDelete(MESSAGES_STORE, conversationId),
+                idbDelete(TASK_IDS_STORE, conversationId),
+            ]);
         } catch (error) {
-            console.error("Failed to remove chat storage:", error);
+            console.error("Failed to remove chat storage from IndexedDB:", error);
         }
     }
 }
 
 /** Default singleton – used by useChat and anywhere else that needs chat storage. */
-export const chatStorage: IChatStorageService = new LocalStorageChatStorage();
+export const chatStorage: IChatStorageService = new IndexedDBChatStorage();

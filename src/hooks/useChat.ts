@@ -42,40 +42,45 @@ export const useChat = ({ agentUrl, isStreamingEnabled = false, contextId, autho
         }
     ];
 
-    const [messages, setMessages] = useState<ChatMessage[]>(() => {
-        if (conversationId) {
-            return chatStorage.loadMessages(conversationId) || defaultMessages;
-        }
-        return defaultMessages;
-    });
-
+    const [messages, setMessages] = useState<ChatMessage[]>(defaultMessages);
     const [isLoading, setIsLoading] = useState<boolean>(false);
     const messagesEndRef = useRef<HTMLDivElement>(null);
-    const isInitialMount = useRef(true);
+    const storageReady = useRef(false);
 
     // A2A multi-turn conversation state
-    const [currentTaskId, setCurrentTaskId] = useState<string | null>(() => {
-        if (conversationId) {
-            return chatStorage.loadTaskId(conversationId);
-        }
-        return null;
-    });
+    const [currentTaskId, setCurrentTaskId] = useState<string | null>(null);
     const [currentContextId, setCurrentContextId] = useState<string | null>(contextId || null);
 
-    // Persist messages to localStorage whenever they change
+    // Load persisted data from IndexedDB on mount
     useEffect(() => {
-        if (!conversationId || isInitialMount.current) {
-            isInitialMount.current = false;
+        if (!conversationId) {
+            storageReady.current = true;
             return;
         }
+        let cancelled = false;
+        (async () => {
+            const [savedMessages, savedTaskId] = await Promise.all([
+                chatStorage.loadMessages(conversationId),
+                chatStorage.loadTaskId(conversationId),
+            ]);
+            if (cancelled) return;
+            if (savedMessages) setMessages(savedMessages);
+            if (savedTaskId) setCurrentTaskId(savedTaskId);
+            storageReady.current = true;
+        })();
+        return () => { cancelled = true; };
+    }, [conversationId]);
+
+    // Persist messages to IndexedDB whenever they change
+    useEffect(() => {
+        if (!conversationId || !storageReady.current) return;
         chatStorage.saveMessages(conversationId, messages);
     }, [messages, conversationId]);
 
-    // Persist taskId to localStorage whenever it changes
+    // Persist taskId to IndexedDB whenever it changes
     useEffect(() => {
-        if (conversationId) {
-            chatStorage.saveTaskId(conversationId, currentTaskId);
-        }
+        if (!conversationId || !storageReady.current) return;
+        chatStorage.saveTaskId(conversationId, currentTaskId);
     }, [currentTaskId, conversationId]);
     
     // Refs for managing typing animation
