@@ -64,7 +64,8 @@ export const ChatContainer: React.FC<ChatContainerProps> = ({
         agentUrl: selectedAgent?.url,
         isStreamingEnabled,
         contextId: currentConversation?.context_id,
-        authorizationHeader: selectedAgent?.authorizationHeader
+        authorizationHeader: selectedAgent?.authorizationHeader,
+        conversationId: currentConversation?.conversation_id
     });
 
     const { trace, loading: traceLoading, error: traceError, projectId, availableProjects, refreshTrace } = useTrace({

@@ -21,16 +21,18 @@ import {
   FileAttachment,
   ToolCall,
 } from '@/types/chat';
+import { chatStorage } from '@/services/ChatStorageService';
 
 interface UseChatProps {
     agentUrl?: string;
     isStreamingEnabled?: boolean;
     contextId?: string;
     authorizationHeader?: string | null;
+    conversationId?: string;
 }
 
-export const useChat = ({ agentUrl, isStreamingEnabled = false, contextId, authorizationHeader }: UseChatProps = {}) => {
-    const [messages, setMessages] = useState<ChatMessage[]>([
+export const useChat = ({ agentUrl, isStreamingEnabled = false, contextId, authorizationHeader, conversationId }: UseChatProps = {}) => {
+    const defaultMessages: ChatMessage[] = [
         {
             id: 1,
             sender: "agent",
@@ -38,14 +40,43 @@ export const useChat = ({ agentUrl, isStreamingEnabled = false, contextId, autho
             senderName: "Assistant",
             timestamp: new Date(),
         }
-    ]);
+    ];
+
+    const [messages, setMessages] = useState<ChatMessage[]>(() => {
+        if (conversationId) {
+            return chatStorage.loadMessages(conversationId) || defaultMessages;
+        }
+        return defaultMessages;
+    });
 
     const [isLoading, setIsLoading] = useState<boolean>(false);
     const messagesEndRef = useRef<HTMLDivElement>(null);
+    const isInitialMount = useRef(true);
 
     // A2A multi-turn conversation state
-    const [currentTaskId, setCurrentTaskId] = useState<string | null>(null);
+    const [currentTaskId, setCurrentTaskId] = useState<string | null>(() => {
+        if (conversationId) {
+            return chatStorage.loadTaskId(conversationId);
+        }
+        return null;
+    });
     const [currentContextId, setCurrentContextId] = useState<string | null>(contextId || null);
+
+    // Persist messages to localStorage whenever they change
+    useEffect(() => {
+        if (!conversationId || isInitialMount.current) {
+            isInitialMount.current = false;
+            return;
+        }
+        chatStorage.saveMessages(conversationId, messages);
+    }, [messages, conversationId]);
+
+    // Persist taskId to localStorage whenever it changes
+    useEffect(() => {
+        if (conversationId) {
+            chatStorage.saveTaskId(conversationId, currentTaskId);
+        }
+    }, [currentTaskId, conversationId]);
     
     // Refs for managing typing animation
     const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);

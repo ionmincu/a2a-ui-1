@@ -9,6 +9,7 @@ import {v4 as uuidv4} from "uuid";
 import {StateConversation} from "@/a2a/state";
 import {ExternalLink, Pencil, Trash2} from "lucide-react";
 import {useHostState} from "@/a2a/state/host/hostStateContext";
+import {chatStorage} from "@/services/ChatStorageService";
 
 type Props = {
     openConversation: (conversation: StateConversation) => void;
@@ -48,15 +49,16 @@ export default function ConversationListPage({openConversation}: Props) {
                 conversations: updatedConversations,
             });
 
+            // Clean up persisted chat messages for this conversation
+            chatStorage.removeConversation(conversationToDelete.id);
+
             console.log(`Conversation "${conversationToDelete.name}" successfully deleted and removed from localStorage`);
-            alert(`Conversation "${conversationToDelete.name}" has been successfully deleted.`);
-            
+
             // Close modal and reset state
             setShowDeleteModal(false);
             setConversationToDelete(null);
         } catch (error) {
             console.error("Error deleting conversation:", error);
-            alert("Failed to delete conversation. Please try again.");
         }
     };
 
@@ -79,7 +81,6 @@ export default function ConversationListPage({openConversation}: Props) {
     const confirmCreateConversation = () => {
         try {
             if (!selectedAgentUrl) {
-                alert("Please select an agent for this conversation.");
                 return;
             }
 
@@ -103,15 +104,13 @@ export default function ConversationListPage({openConversation}: Props) {
             });
 
             console.log("New conversation created and saved to localStorage:", newConversation.conversation_name);
-            alert("New conversation created successfully!");
-            
+
             // Reset form and close modal
             setNewConversationName("New conversation");
             setSelectedAgentUrl("");
             setShowNewConversationModal(false);
         } catch (error) {
             console.error("Error creating conversation:", error);
-            alert("Failed to create conversation. Please try again.");
         }
     };
 

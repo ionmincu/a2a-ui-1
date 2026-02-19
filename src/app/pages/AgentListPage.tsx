@@ -74,7 +74,6 @@ export default function AgentListPage() {
             console.log("Agent successfully added and saved to localStorage:", newAgent.name);
         } catch (error) {
             console.error("Error fetching agent data:", error);
-            alert(`Failed to fetch agent. Check the URL and try again: ${error}.`);
         }
     };
 
@@ -100,16 +99,12 @@ export default function AgentListPage() {
             }
             
             console.log(`Agent "${agentToDelete.name}" successfully deleted and removed from localStorage`);
-            
-            // Show success message
-            alert(`Agent "${agentToDelete.name}" has been successfully deleted.`);
-            
+
             // Close modal and reset state
             setShowDeleteModal(false);
             setAgentToDelete(null);
         } catch (error) {
             console.error("Error deleting agent:", error);
-            alert("Failed to delete agent. Please try again.");
         }
     };
 
@@ -156,7 +151,6 @@ export default function AgentListPage() {
             setEditAgentAuthHeader("");
         } catch (error) {
             console.error("Error updating agent:", error);
-            alert("Failed to update agent. Please try again.");
         }
     };
 
