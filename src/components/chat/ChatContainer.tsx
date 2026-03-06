@@ -63,7 +63,6 @@ export const ChatContainer: React.FC<ChatContainerProps> = ({
     const { messages, isLoading, messagesEndRef, scrollToBottom, sendMessage } = useChat({
         agentUrl: selectedAgent?.url,
         isStreamingEnabled,
-        contextId: currentConversation?.context_id,
         authorizationHeader: selectedAgent?.authorizationHeader,
         conversationId: currentConversation?.conversation_id
     });

@@ -9,8 +9,8 @@ import { ChatMessage, ToolCall } from '@/types/chat';
 export interface IChatStorageService {
     loadMessages(conversationId: string): Promise<ChatMessage[] | null>;
     saveMessages(conversationId: string, messages: ChatMessage[]): Promise<void>;
-    loadTaskId(conversationId: string): Promise<string | null>;
-    saveTaskId(conversationId: string, taskId: string | null): Promise<void>;
+    loadContextId(conversationId: string): Promise<string | null>;
+    saveContextId(conversationId: string, contextId: string | null): Promise<void>;
     removeConversation(conversationId: string): Promise<void>;
 }
 
@@ -108,7 +108,7 @@ export class IndexedDBChatStorage implements IChatStorageService {
         }
     }
 
-    async loadTaskId(conversationId: string): Promise<string | null> {
+    async loadContextId(conversationId: string): Promise<string | null> {
         try {
             return (await idbGet<string>(TASK_IDS_STORE, conversationId)) ?? null;
         } catch {
@@ -116,15 +116,15 @@ export class IndexedDBChatStorage implements IChatStorageService {
         }
     }
 
-    async saveTaskId(conversationId: string, taskId: string | null): Promise<void> {
+    async saveContextId(conversationId: string, contextId: string | null): Promise<void> {
         try {
-            if (taskId) {
-                await idbPut(TASK_IDS_STORE, conversationId, taskId);
+            if (contextId) {
+                await idbPut(TASK_IDS_STORE, conversationId, contextId);
             } else {
                 await idbDelete(TASK_IDS_STORE, conversationId);
             }
         } catch (error) {
-            console.error("Failed to save task ID to IndexedDB:", error);
+            console.error("Failed to save context ID to IndexedDB:", error);
         }
     }
 

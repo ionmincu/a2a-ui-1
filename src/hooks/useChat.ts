@@ -26,12 +26,11 @@ import { chatStorage } from '@/services/ChatStorageService';
 interface UseChatProps {
     agentUrl?: string;
     isStreamingEnabled?: boolean;
-    contextId?: string;
     authorizationHeader?: string | null;
     conversationId?: string;
 }
 
-export const useChat = ({ agentUrl, isStreamingEnabled = false, contextId, authorizationHeader, conversationId }: UseChatProps = {}) => {
+export const useChat = ({ agentUrl, isStreamingEnabled = false, authorizationHeader, conversationId }: UseChatProps = {}) => {
     const defaultMessages: ChatMessage[] = [
         {
             id: 1,
@@ -48,8 +47,9 @@ export const useChat = ({ agentUrl, isStreamingEnabled = false, contextId, autho
     const storageReady = useRef(false);
 
     // A2A multi-turn conversation state
-    const [currentTaskId, setCurrentTaskId] = useState<string | null>(null);
-    const [currentContextId, setCurrentContextId] = useState<string | null>(contextId || null);
+    // Per server spec: contextId = taskId = conversationId (single identity).
+    // First message sends nothing; server returns contextId which we reuse for follow-ups.
+    const [currentContextId, setCurrentContextId] = useState<string | null>(null);
 
     // Load persisted data from IndexedDB on mount
     useEffect(() => {
@@ -59,13 +59,13 @@ export const useChat = ({ agentUrl, isStreamingEnabled = false, contextId, autho
         }
         let cancelled = false;
         (async () => {
-            const [savedMessages, savedTaskId] = await Promise.all([
+            const [savedMessages, savedContextId] = await Promise.all([
                 chatStorage.loadMessages(conversationId),
-                chatStorage.loadTaskId(conversationId),
+                chatStorage.loadContextId(conversationId),
             ]);
             if (cancelled) return;
             if (savedMessages) setMessages(savedMessages);
-            if (savedTaskId) setCurrentTaskId(savedTaskId);
+            if (savedContextId) setCurrentContextId(savedContextId);
             storageReady.current = true;
         })();
         return () => { cancelled = true; };
@@ -77,11 +77,11 @@ export const useChat = ({ agentUrl, isStreamingEnabled = false, contextId, autho
         chatStorage.saveMessages(conversationId, messages);
     }, [messages, conversationId]);
 
-    // Persist taskId to IndexedDB whenever it changes
+    // Persist contextId to IndexedDB whenever it changes
     useEffect(() => {
         if (!conversationId || !storageReady.current) return;
-        chatStorage.saveTaskId(conversationId, currentTaskId);
-    }, [currentTaskId, conversationId]);
+        chatStorage.saveContextId(conversationId, currentContextId);
+    }, [currentContextId, conversationId]);
     
     // Refs for managing typing animation
     const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
@@ -211,14 +211,14 @@ export const useChat = ({ agentUrl, isStreamingEnabled = false, contextId, autho
             role: chatMessage.sender === "user" ? "user" : "agent",
             parts: parts,
             kind: "message",
-            ...(contextId && { contextId: contextId }), // Conditionally add contextId
+            ...(currentContextId && { contextId: currentContextId }),
             metadata: {
                 timestamp: chatMessage.timestamp.toISOString(),
                 senderName: chatMessage.senderName,
                 originalId: chatMessage.id
             }
         };
-    }, [contextId]);
+    }, [currentContextId]);
 
     // Function to get the last 10 messages in A2A format
     const getMessageHistory = useCallback((currentMessages: ChatMessage[]): Message[] => {
@@ -273,14 +273,15 @@ export const useChat = ({ agentUrl, isStreamingEnabled = false, contextId, autho
         // Create message object:
         // - Use taskId to continue conversation (follow-up messages)
         // - Use contextId only for first message
-        console.log("🔍 Building message - currentTaskId:", currentTaskId, "currentContextId:", currentContextId);
+        console.log("🔍 Building message - currentContextId:", currentContextId);
         const message: Message = {
             messageId: messageId,
             role: "user",
             parts: parts,
             kind: "message",
-            ...(currentTaskId && { taskId: currentTaskId }), // Follow-up: use saved taskId
-            ...(currentContextId && !currentTaskId && { contextId: currentContextId }) // First message: use contextId
+            // contextId = taskId = conversationId per server spec.
+            // First message: no contextId (server creates it). Follow-ups: send contextId.
+            ...(currentContextId && { contextId: currentContextId })
         };
 
         const sendParams: MessageSendParams = {
@@ -300,7 +301,7 @@ export const useChat = ({ agentUrl, isStreamingEnabled = false, contextId, autho
             messageId,
             historyLength: messageHistory.length,
             isStreaming: false,
-            contextId: contextId
+            contextId: currentContextId
         });
 
         console.log("SendMessageParams:", JSON.stringify(sendParams, null, 2));
@@ -308,33 +309,27 @@ export const useChat = ({ agentUrl, isStreamingEnabled = false, contextId, autho
         const responseMessage = await client.sendMessage(sendParams);
         console.log("Message Result (full structure):", JSON.stringify(responseMessage, null, 2));
 
-        // Save taskId and contextId from response for multi-turn conversations
+        // Save contextId from response for multi-turn conversations.
+        // Server uses contextId = taskId = conversationId (single identity).
         if (responseMessage) {
-            // Extract taskId - can be either 'id' (Task) or 'taskId' (Message)
-            let extractedTaskId: string | null = null;
+            let extractedContextId: string | null = null;
 
-            if ('id' in responseMessage && typeof responseMessage.id === 'string') {
-                extractedTaskId = responseMessage.id;
-                console.log("✅ Saving taskId from Task.id:", extractedTaskId);
-            } else if ('taskId' in responseMessage && typeof (responseMessage as any).taskId === 'string') {
-                extractedTaskId = (responseMessage as any).taskId;
-                console.log("✅ Saving taskId from Message.taskId:", extractedTaskId);
-            } else {
-                console.warn("⚠️ No taskId found in response. Response keys:", Object.keys(responseMessage));
-            }
-
-            if (extractedTaskId) {
-                setCurrentTaskId(extractedTaskId);
-            }
-
-            // Extract contextId if available in the response
+            // Prefer contextId directly on the response
             if ('contextId' in responseMessage && typeof (responseMessage as any).contextId === 'string') {
-                console.log("Saving contextId:", (responseMessage as any).contextId);
-                setCurrentContextId((responseMessage as any).contextId);
-            } else if ('status' in responseMessage && (responseMessage as any).status?.message?.contextId) {
-                // Some servers might put contextId inside status.message
-                console.log("Saving contextId from status.message:", (responseMessage as any).status.message.contextId);
-                setCurrentContextId((responseMessage as any).status.message.contextId);
+                extractedContextId = (responseMessage as any).contextId;
+            }
+            // Fall back to id (Task response) or taskId (Message response)
+            else if ('id' in responseMessage && typeof responseMessage.id === 'string') {
+                extractedContextId = responseMessage.id;
+            } else if ('taskId' in responseMessage && typeof (responseMessage as any).taskId === 'string') {
+                extractedContextId = (responseMessage as any).taskId;
+            }
+
+            if (extractedContextId) {
+                console.log("✅ Saving contextId:", extractedContextId);
+                setCurrentContextId(extractedContextId);
+            } else {
+                console.warn("⚠️ No contextId found in response. Response keys:", Object.keys(responseMessage));
             }
         }
 
@@ -415,14 +410,15 @@ export const useChat = ({ agentUrl, isStreamingEnabled = false, contextId, autho
         // Create message object:
         // - Use taskId to continue conversation (follow-up messages)
         // - Use contextId only for first message
-        console.log("🔍 Building streaming message - currentTaskId:", currentTaskId, "currentContextId:", currentContextId);
+        console.log("🔍 Building streaming message - currentContextId:", currentContextId);
         const streamMessage: Message = {
             messageId: messageId,
             role: "user",
             parts: parts,
             kind: "message",
-            ...(currentTaskId && { taskId: currentTaskId }), // Follow-up: use saved taskId
-            ...(currentContextId && !currentTaskId && { contextId: currentContextId }) // First message: use contextId
+            // contextId = taskId = conversationId per server spec.
+            // First message: no contextId (server creates it). Follow-ups: send contextId.
+            ...(currentContextId && { contextId: currentContextId })
         };
 
         const sendParams: TaskSendParams = {
@@ -444,7 +440,7 @@ export const useChat = ({ agentUrl, isStreamingEnabled = false, contextId, autho
             messageId,
             historyCount: messageHistory.length,
             isStreaming: true,
-            contextId: contextId
+            contextId: currentContextId
         });
 
         console.log("TaskSendParams:", JSON.stringify(sendParams, null, 2));
@@ -462,16 +458,14 @@ export const useChat = ({ agentUrl, isStreamingEnabled = false, contextId, autho
                 console.log("Streaming event:", event);
 
                 if (event && typeof event === 'object') {
-                    // Save taskId from first event for multi-turn conversations
-                    if ('id' in event && typeof event.id === 'string') {
-                        console.log("✅ Saving taskId from streaming event:", event.id);
-                        setCurrentTaskId(event.id);
-                    }
-
-                    // Save contextId if available in event
+                    // Save contextId from streaming event (contextId = taskId = conversationId).
+                    // Prefer contextId, fall back to id (taskId).
                     if ('contextId' in event && typeof (event as any).contextId === 'string') {
-                        console.log("Saving contextId from streaming event:", (event as any).contextId);
+                        console.log("✅ Saving contextId from streaming event:", (event as any).contextId);
                         setCurrentContextId((event as any).contextId);
+                    } else if ('id' in event && typeof event.id === 'string') {
+                        console.log("✅ Saving contextId from streaming event.id:", event.id);
+                        setCurrentContextId(event.id);
                     }
 
                     let newTextChunk = "";
@@ -750,13 +744,11 @@ export const useChat = ({ agentUrl, isStreamingEnabled = false, contextId, autho
         }
     }, [isLoading, agentUrl, messages, isStreamingEnabled, sendMessageSync, sendMessageStream, stopTyping]);
 
-    // Reset conversation state (clear taskId to start a new conversation)
+    // Reset conversation state (clear contextId to start a new conversation)
     const resetConversation = useCallback(() => {
-        console.log("Resetting conversation - clearing taskId");
-        setCurrentTaskId(null);
-        // Keep contextId if it was provided as a prop
-        setCurrentContextId(contextId || null);
-    }, [contextId]);
+        console.log("Resetting conversation - clearing contextId");
+        setCurrentContextId(null);
+    }, []);
 
     return {
         messages,
@@ -766,7 +758,6 @@ export const useChat = ({ agentUrl, isStreamingEnabled = false, contextId, autho
         sendMessage,
         setMessages,
         resetConversation,
-        currentTaskId, // Expose for debugging/testing
         currentContextId // Expose for debugging/testing
     };
 }; 
